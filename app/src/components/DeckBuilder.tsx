@@ -69,6 +69,15 @@ export function DeckBuilder() {
     main: main.map(({ name: n, qty }) => ({ name: n.split(' //')[0], qty })),
   })
 
+  const exportDeck = async (deckName: string, xml: string) => {
+    try {
+      await downloadCod(deckName, xml)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      window.alert(message)
+    }
+  }
+
   const loadCodDeck = async (cod: CodDeck) => {
     setBusy(true)
     try {
@@ -193,7 +202,7 @@ export function DeckBuilder() {
                 <button
                   type="button"
                   title="Export .cod"
-                  onClick={() => void downloadCod(d.name, d.cod)}
+                  onClick={() => void exportDeck(d.name, d.cod)}
                 >
                   ⬇
                 </button>
@@ -221,7 +230,7 @@ export function DeckBuilder() {
           <button
             type="button"
             className="new-build"
-            onClick={() => void downloadCod(name.trim() || 'deck', deckToCod(toCodDeck()))}
+            onClick={() => void exportDeck(name.trim() || 'deck', deckToCod(toCodDeck()))}
             disabled={total === 0}
           >
             ⬇ Export .cod

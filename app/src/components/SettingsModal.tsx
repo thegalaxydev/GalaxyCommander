@@ -202,6 +202,18 @@ function SettingsForm({
             />
             Disable card hover previews
           </label>
+          <label className="settings-check">
+            <input
+              type="checkbox"
+              checked={draft.allowUnsetCards}
+              onChange={(e) => setDraft({ ...draft, allowUnsetCards: e.target.checked })}
+            />
+            Allow illegal / un-set (gray border) cards &amp; commanders
+          </label>
+          <p className="settings-hint">
+            Includes silver-bordered, acorn, and other non-tournament-legal cards (Un-sets, etc.)
+            in commander search and generation. EDHREC data may be unavailable for these.
+          </p>
         </section>
 
         <section className="settings-section">

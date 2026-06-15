@@ -17,6 +17,7 @@ import { GEN_STEPS, computeTieredUpgrades, generateDeck, swapExpensiveCards } fr
 import { findCombos } from './combos'
 import { commanderSlug, fetchEdhrecPage, fetchEdhrecPageBySlug, type EdhrecTheme } from './edhrec'
 import { unionIdentity } from './partner'
+import { setAllowUnsetCards } from './scryfall'
 import { applyAppAppearance } from './themes'
 import { handleChat, type VariantKind } from './chat'
 import { askLlm, llmConfigured } from './llmChat'
@@ -104,6 +105,10 @@ export default function App() {
     const identity = commander ? unionIdentity(commander, partner) : null
     applyAppAppearance(appSettings, identity)
   }, [appSettings, commander, partner])
+
+  useEffect(() => {
+    setAllowUnsetCards(appSettings.allowUnsetCards)
+  }, [appSettings.allowUnsetCards])
 
   const applyPersonalityPreset = (id: Exclude<DeckPersonality, 'custom'>) => {
     const next = applyPreset(id, options)
@@ -322,7 +327,12 @@ export default function App() {
   const exportCod = async () => {
     if (!deck) return
     const cod = generatedDeckToCod(deck)
-    await downloadCod(cod.name, deckToCod(cod))
+    try {
+      await downloadCod(cod.name, deckToCod(cod))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      window.alert(message)
+    }
   }
 
   const saveToBuilder = () => {

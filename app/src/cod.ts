@@ -103,12 +103,18 @@ export async function downloadCod(filename: string, xml: string) {
 
   if (isTauri()) {
     const { save } = await import('@tauri-apps/plugin-dialog')
-    const { writeTextFile } = await import('@tauri-apps/plugin-fs')
+    const { invoke } = await import('@tauri-apps/api/core')
     const path = await save({
       defaultPath: fullName,
       filters: [{ name: 'Cockatrice Deck', extensions: ['cod'] }],
     })
-    if (path) await writeTextFile(path, xml)
+    if (!path) return
+    try {
+      await invoke('write_text_file', { path, contents: xml })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      throw new Error(`Failed to save deck file: ${message}`)
+    }
     return
   }
 

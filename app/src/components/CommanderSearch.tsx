@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ScryCard } from '../types'
-import { searchCommanders, searchCards, cardImage } from '../scryfall'
+import { searchCommanders, searchCards, cardImage, legalOrUpcoming } from '../scryfall'
 import { ColorPips } from './ManaCost'
 
 const defaultsCache = new Map<string, ScryCard[]>()
@@ -29,7 +29,7 @@ export function CommanderSearch({ commander, onSelect, baseFilter, placeholder }
       return
     }
     setLoading(true)
-    const cards = await searchCards(`${filterKey} legal:commander`, {
+    const cards = await searchCards(`${filterKey} ${legalOrUpcoming()}`, {
       order: 'edhrec',
       max: 10,
     }).catch(() => [] as ScryCard[])

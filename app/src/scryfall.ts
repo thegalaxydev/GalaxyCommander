@@ -33,7 +33,14 @@ export async function searchCards(
   return out.slice(0, max)
 }
 
+let allowUnsetCards = false
+
+export function setAllowUnsetCards(allow: boolean): void {
+  allowUnsetCards = allow
+}
+
 export function legalOrUpcoming(): string {
+  if (allowUnsetCards) return ''
   return `(legal:commander or date>${new Date().toISOString().slice(0, 10)})`
 }
 

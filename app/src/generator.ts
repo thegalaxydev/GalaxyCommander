@@ -13,6 +13,7 @@ import { searchCards, cardOracle, cardPrice, cardManaCost, legalOrUpcoming } fro
 import { commanderSlug, fetchEdhrecPageBySlug, resolveCards, type EdhrecRec, type EdhrecPage } from './edhrec'
 import { themeQuery, TAG_QUERIES, detectTribe } from './themes'
 import { unionIdentity } from './partner'
+import { finalScore, rankInclusion, resolveWeights } from './scoring'
 
 export type ProgressFn = (stepIndex: number, cards: DeckCard[]) => void
 
@@ -268,6 +269,8 @@ export async function generateDeck(
   const avoidTutorsEffective = settings.options.avoidTutors || profile.tutors <= 30
   const neverSet = new Set((settings.neverInclude ?? []).map((n) => n.toLowerCase()))
   const targets = buildTargets(settings, profile)
+  const personality = settings.personality ?? 'custom'
+  const weights = resolveWeights(personality, settings.options)
   const deck: DeckCard[] = [
     { card: commander, category: 'Commander', qty: 1, reason: 'Your commander.' },
   ]
@@ -318,6 +321,10 @@ export async function generateDeck(
   const themePages = await Promise.all(
     slugs.slice(0, 2).map((s) => fetchEdhrecPageBySlug(baseSlug, s))
   )
+  const themeNameSet = new Set<string>()
+  for (const page of themePages) {
+    for (const rec of page?.recs ?? []) themeNameSet.add(rec.name)
+  }
   const pages = [basePage, ...fallbackPages, ...themePages]
   const recMap = new Map<string, EdhrecRec>()
   for (const page of pages) {
@@ -328,12 +335,6 @@ export async function generateDeck(
   }
 
   const resolved = await resolveCards([...recMap.keys()])
-  const synergyWeight = settings.options.prioritizeSynergy
-    ? settings.personality === 'synergy'
-      ? 3.5
-      : 3
-    : 1.5
-  const stapleWeight = settings.options.includeStaples ? 1 : 0.4
 
   const pool = new Map<Category, Candidate[]>()
   const addCandidate = (card: ScryCard, score: number, reason: string, cat?: Category) => {
@@ -361,19 +362,52 @@ export async function generateDeck(
     const reason =
       `Played in ${inclusionPct}% of ${leadName} decks on EDHREC` +
       (synergyPct > 0 ? `, with +${synergyPct}% synergy for this commander.` : '.')
-    addCandidate(card, rec.inclusion * stapleWeight + rec.synergy * synergyWeight, reason)
+    const category = categorize(card)
+    const score = finalScore(
+      {
+        synergy: rec.synergy,
+        inclusion: rec.inclusion,
+        isTheme: themeNameSet.has(name),
+        price: cardPrice(card),
+        cap,
+        cmc: card.cmc,
+        category,
+        personality,
+      },
+      weights
+    )
+    addCandidate(card, score, reason, category)
   }
 
   const base = identityQuery(identity, commanderNames)
-  const fillFromScryfall = async (cat: Category, query: string, reason: string, need: number) => {
+  const scoreScry = (card: ScryCard, cat: Category, isTheme = false): number =>
+    finalScore(
+      {
+        synergy: 0,
+        inclusion: rankInclusion(card.edhrec_rank),
+        isTheme,
+        price: cardPrice(card),
+        cap,
+        cmc: card.cmc,
+        category: cat,
+        personality,
+      },
+      weights
+    )
+  const fillFromScryfall = async (
+    cat: Category,
+    query: string,
+    reason: string,
+    need: number,
+    isTheme = false
+  ) => {
     const have = pool.get(cat)?.length ?? 0
     if (have >= need) return
     const extra = await searchCards(`${base} ${query} usd<=${cap === Infinity ? 1000 : cap}`, {
       max: Math.min(60, (need - have) * 3),
     })
     for (const card of extra) {
-      const rank = card.edhrec_rank ?? 30000
-      addCandidate(card, Math.max(0, (30000 - rank) / 30000) * 0.5, reason, cat)
+      addCandidate(card, scoreScry(card, cat, isTheme), reason, cat)
     }
   }
 
@@ -414,7 +448,7 @@ export async function generateDeck(
     if (tribe) themeQueries.push(`t:${tribe.toLowerCase()}`)
   }
   for (const q of themeQueries.slice(0, 4)) {
-    await fillFromScryfall('Synergy', `${q} -t:land`, 'Directly supports your chosen theme.', 40)
+    await fillFromScryfall('Synergy', `${q} -t:land`, 'Directly supports your chosen theme.', 40, true)
   }
   if (settings.options.latestSets) {
     const fresh = await searchCards(`${base} -t:land year>=2024 usd<=${cap === Infinity ? 1000 : cap}`, {
@@ -423,7 +457,8 @@ export async function generateDeck(
       max: 20,
     })
     for (const card of fresh) {
-      addCandidate(card, 0.45, 'A strong recent printing for this strategy.')
+      const cat = categorize(card)
+      addCandidate(card, scoreScry(card, cat), 'A strong recent printing for this strategy.', cat)
     }
   }
   await fillFromScryfall('Finishers', '(pow>=6 or o:"wins the game") t:creature', 'Closes out the game once you are ahead.', targets.finishers + 2)
@@ -450,7 +485,7 @@ export async function generateDeck(
         continue
       }
       const before = list.length
-      addCandidate(card, 0.7, pack.reason, pack.category)
+      addCandidate(card, scoreScry(card, pack.category) + 0.6, pack.reason, pack.category)
       if ((pool.get(pack.category)?.length ?? 0) > before) boosted++
     }
   }
