@@ -13,7 +13,7 @@ import type {
   ScryCard,
   UpgradeTier,
 } from './types'
-import { GEN_STEPS, computeTieredUpgrades, generateDeck, swapExpensiveCards } from './generator'
+import { GEN_STEPS, computeTieredUpgrades, deckFromCards, generateDeck, swapExpensiveCards } from './generator'
 import { findCombos } from './combos'
 import { commanderSlug, fetchEdhrecPage, fetchEdhrecPageBySlug, type EdhrecTheme } from './edhrec'
 import { unionIdentity } from './partner'
@@ -257,6 +257,31 @@ export default function App() {
     runGeneration(next)
   }
 
+  const analyzeBuiltDeck = (
+    commanderCard: ScryCard,
+    partnerCard: ScryCard | null,
+    cards: DeckCard[],
+    name: string
+  ) => {
+    const built = deckFromCards(commanderCard, partnerCard, cards, name)
+    setCommander(commanderCard)
+    setPartner(partnerCard)
+    setChatMessages([])
+    setCodSaved(true)
+    setDeck(built)
+    deckRef.current = built
+    setLiveCards(built.cards)
+    setCombos(null)
+    setUpgrades([])
+    setView('generate')
+    setCombosLoading(true)
+    findCombos(built).then((c) => {
+      setCombos(c)
+      setCombosLoading(false)
+    })
+    computeTieredUpgrades(built).then(setUpgrades)
+  }
+
   const sendChat = async (text: string) => {
     const current = deckRef.current
     if (!current) return
@@ -374,7 +399,7 @@ export default function App() {
         commanderIdentity={commander ? unionIdentity(commander, partner) : null}
       />
       {view === 'builder' ? (
-        <DeckBuilder />
+        <DeckBuilder onAnalyze={analyzeBuiltDeck} />
       ) : (
     <div className="app">
       <Sidebar

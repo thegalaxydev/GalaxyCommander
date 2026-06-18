@@ -32,7 +32,11 @@ interface Hover {
   y: number
 }
 
-export function DeckBuilder() {
+interface Props {
+  onAnalyze: (commander: ScryCard, partner: ScryCard | null, cards: DeckCard[], name: string) => void
+}
+
+export function DeckBuilder({ onAnalyze }: Props) {
   const [saved, setSaved] = useState<SavedDeck[]>(loadSavedDecks)
   const [deckId, setDeckId] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -68,6 +72,25 @@ export function DeckBuilder() {
     side: side.map(({ name: n, qty }) => ({ name: n.split(' //')[0], qty })),
     main: main.map(({ name: n, qty }) => ({ name: n.split(' //')[0], qty })),
   })
+
+  const playtest = () => {
+    const commanderCard = side.find((e) => e.card)?.card
+    if (!commanderCard) {
+      window.alert(
+        'Set a commander first — use the ★ button on a card to move it into the Commander zone.'
+      )
+      return
+    }
+    const partnerCard = side.filter((e) => e.card)[1]?.card ?? null
+    const cards: DeckCard[] = main
+      .filter((e) => e.card)
+      .map((e) => ({ card: e.card!, category: categorize(e.card!), qty: e.qty, reason: '' }))
+    if (cards.length === 0) {
+      window.alert('Add some cards to the deck before playtesting.')
+      return
+    }
+    onAnalyze(commanderCard, partnerCard, cards, name.trim() || 'Untitled Deck')
+  }
 
   const exportDeck = async (deckName: string, xml: string) => {
     try {
@@ -226,6 +249,14 @@ export function DeckBuilder() {
           <span className="builder-count">{total} cards</span>
           <button className="new-build" onClick={saveCurrent}>
             {savedFlash ? '✓ Saved' : 'Save'}
+          </button>
+          <button
+            type="button"
+            className="new-build"
+            onClick={playtest}
+            disabled={total === 0}
+          >
+            ▶ Playtest
           </button>
           <button
             type="button"

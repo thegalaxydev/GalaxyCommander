@@ -97,6 +97,13 @@ function isComboPiece(card: ScryCard): boolean {
   return COMBO_HINTS.test(cardOracle(card))
 }
 
+const COMMANDER_IDENTITY_MANA =
+  /any color in your commander'?s color identity|any color among your commanders'? color identities/i
+
+function deadInColorless(card: ScryCard): boolean {
+  return COMMANDER_IDENTITY_MANA.test(cardOracle(card))
+}
+
 interface Targets {
   lands: number
   ramp: number
@@ -262,6 +269,7 @@ export async function generateDeck(
   const { commander } = settings
   const partner = settings.partner ?? null
   const identity = unionIdentity(commander, partner)
+  const colorless = identity.length === 0
   const commanderNames = partner ? [commander.name, partner.name] : [commander.name]
   const cap = BUDGET_CAP[settings.budget]
   const profile = settings.powerProfile ?? DEFAULT_PROFILE
@@ -340,6 +348,7 @@ export async function generateDeck(
   const addCandidate = (card: ScryCard, score: number, reason: string, cat?: Category) => {
     if (!isLegal(card) || !fitsIdentity(card, identity)) return
     if (/\bBasic\b/.test(card.type_line)) return
+    if (colorless && deadInColorless(card)) return
     if (neverSet.has(card.name.toLowerCase())) return
     if (cardPrice(card) > cap) return
     if (avoidTutorsEffective && isTutor(card)) return
@@ -528,6 +537,7 @@ export async function generateDeck(
     for (const card of filler) {
       if (remaining <= 0) break
       if (used.has(card.name) || !isLegal(card) || cardPrice(card) > cap) continue
+      if (colorless && deadInColorless(card)) continue
       if (neverSet.has(card.name.toLowerCase())) continue
       used.add(card.name)
       deck.push({
@@ -560,6 +570,44 @@ export async function generateDeck(
   }
 }
 
+export function deckFromCards(
+  commander: ScryCard,
+  partner: ScryCard | null,
+  mainCards: DeckCard[],
+  name?: string
+): Deck {
+  const cards: DeckCard[] = [
+    { card: commander, category: 'Commander', qty: 1, reason: 'Your commander.' },
+    ...(partner
+      ? [{ card: partner, category: 'Commander' as Category, qty: 1, reason: 'Your partner commander.' }]
+      : []),
+    ...mainCards.filter((d) => d.category !== 'Commander'),
+  ]
+  const settings: BuildSettings = {
+    commander,
+    partner,
+    bracket: 3,
+    budget: 'any',
+    themes: [],
+    tags: [],
+    options: {
+      includeStaples: true,
+      prioritizeSynergy: true,
+      avoidCombos: false,
+      avoidTutors: false,
+      latestSets: true,
+    },
+    powerProfile: DEFAULT_PROFILE,
+    meta: [],
+    mustInclude: [],
+    neverInclude: [],
+  }
+  const power = estimatePower(settings, cards)
+  const lead = name?.trim() || `${commander.name.split(',')[0]}'s deck`
+  const description = `Analysis of ${lead} — a ${cards.length}-card list. Power, health, combos, and playtest stats are estimated from the cards in the deck.`
+  return { commander, cards, settings, power, description }
+}
+
 const CATEGORY_QUERIES: Partial<Record<Category, string>> = {
   Lands: '-t:basic t:land',
   Ramp: '(o:"{T}: Add" or o:"search your library for a basic land") -t:land mv<=4',
@@ -581,6 +629,7 @@ function deckIdentityQuery(deck: Deck): string {
 
 export async function swapExpensiveCards(deck: Deck, maxPrice: number): Promise<{ deck: Deck; swapped: [string, string][] }> {
   const used = new Set(deck.cards.map((d) => d.card.name))
+  const colorless = unionIdentity(deck.commander, deck.settings.partner).length === 0
   const base = deckIdentityQuery(deck)
   const expensive = deck.cards.filter(
     (d) => d.category !== 'Commander' && !BASIC_NAMES.test(d.card.name) && cardPrice(d.card) > maxPrice
@@ -598,7 +647,11 @@ export async function swapExpensiveCards(deck: Deck, maxPrice: number): Promise<
     if (!expensive.includes(d)) return d
     const pool = replacementPools.get(d.category) ?? []
     const replacement = pool.find(
-      (c) => !used.has(c.name) && isLegal(c) && cardPrice(c) <= maxPrice
+      (c) =>
+        !used.has(c.name) &&
+        isLegal(c) &&
+        cardPrice(c) <= maxPrice &&
+        !(colorless && deadInColorless(c))
     )
     if (!replacement) return d
     used.add(replacement.name)
@@ -617,6 +670,7 @@ export async function computeTieredUpgrades(deck: Deck): Promise<UpgradeTier[]> 
   const inDeck = new Set(deck.cards.map((d) => d.card.name))
   const usedOut = new Set<string>()
   const reservedIn = new Set<string>()
+  const colorless = unionIdentity(deck.commander, deck.settings.partner).length === 0
   const base = deckIdentityQuery(deck)
 
   const poolCats = ['Ramp', 'Card Draw', 'Removal', 'Board Wipes', 'Lands', 'Synergy', 'Finishers'] as Category[]
@@ -657,6 +711,7 @@ export async function computeTieredUpgrades(deck: Deck): Promise<UpgradeTier[]> 
       const replacement = pool.find((c) => {
         if (inDeck.has(c.name) || reservedIn.has(c.name)) return false
         if (!isLegal(c)) return false
+        if (colorless && deadInColorless(c)) return false
         const p = cardPrice(c)
         if (p <= outPrice || p > cap) return false
         const inRank = c.edhrec_rank ?? 20000
@@ -688,11 +743,12 @@ export async function computeTieredUpgrades(deck: Deck): Promise<UpgradeTier[]> 
 export async function computeUpgrades(deck: Deck): Promise<{ card: ScryCard; note: string }[]> {
   const cap = BUDGET_CAP[deck.settings.budget]
   const used = new Set(deck.cards.map((d) => d.card.name))
+  const colorless = unionIdentity(deck.commander, deck.settings.partner).length === 0
   const base = deckIdentityQuery(deck)
   const priceFilter = cap === Infinity ? 'usd>10' : `usd>${cap}`
   const candidates = await searchCards(`${base} -t:basic ${priceFilter}`, { max: 30 })
   return candidates
-    .filter((c) => !used.has(c.name) && isLegal(c))
+    .filter((c) => !used.has(c.name) && isLegal(c) && !(colorless && deadInColorless(c)))
     .slice(0, 8)
     .map((card) => ({
       card,
