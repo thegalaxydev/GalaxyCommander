@@ -7,7 +7,7 @@ import { CommanderSearch } from './CommanderSearch'
 import { CardPicker } from './CardPicker'
 import { PartnerDiscovery } from './PartnerDiscovery'
 import { partnerMode, partnerSearchFilter, unionIdentity } from '../partner'
-import { fetchNamedCard } from '../scryfall'
+import { fetchNamedCard, fetchRandomCommander } from '../scryfall'
 import { PERSONALITY_PRESETS } from '../personality'
 
 interface Props {
@@ -70,6 +70,21 @@ export function Sidebar(props: Props) {
   const [rulesOpen, setRulesOpen] = useState(false)
   const [customTheme, setCustomTheme] = useState('')
   const [showCustom, setShowCustom] = useState(false)
+  const [rolling, setRolling] = useState(false)
+  const [randomColors, setRandomColors] = useState<string[]>([])
+
+  const toggleRandomColor = (c: string) =>
+    setRandomColors((cur) => (cur.includes(c) ? cur.filter((x) => x !== c) : [...cur, c]))
+
+  const rollRandomCommander = async () => {
+    setRolling(true)
+    try {
+      const card = await fetchRandomCommander(randomColors)
+      if (card) props.onCommander(card)
+    } finally {
+      setRolling(false)
+    }
+  }
   const mode = props.commander ? partnerMode(props.commander) : null
   const identity = props.commander ? unionIdentity(props.commander, props.partner) : undefined
 
@@ -106,6 +121,31 @@ export function Sidebar(props: Props) {
           commander={props.commander}
           onSelect={(c) => props.onCommander(c ?? null)}
         />
+        <div className="color-filter" role="group" aria-label="Random commander color identity">
+          {(['W', 'U', 'B', 'R', 'G'] as const).map((c) => (
+            <button
+              key={c}
+              type="button"
+              className={`color-pip ${randomColors.includes(c) ? 'active' : ''}`}
+              onClick={() => toggleRandomColor(c)}
+              aria-pressed={randomColors.includes(c)}
+            >
+              <i className={`ms ms-${c.toLowerCase()} ms-cost`} />
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="random-commander"
+          onClick={rollRandomCommander}
+          disabled={rolling || props.disabled}
+        >
+          {rolling
+            ? 'Rolling…'
+            : `🎲 ${props.commander ? 'Reroll' : 'Random'} ${
+                randomColors.length ? randomColors.join('') : 'Colorless'
+              } Commander`}
+        </button>
       </section>
 
       {props.commander && mode && (

@@ -462,6 +462,65 @@ button {
   border-style: dashed;
 }
 
+.color-filter {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.color-pip {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+  font-size: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  opacity: 0.45;
+  filter: grayscale(0.6);
+  transition: opacity 0.15s ease, filter 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.color-pip:hover {
+  opacity: 0.8;
+  filter: grayscale(0.2);
+}
+
+.color-pip.active {
+  opacity: 1;
+  filter: none;
+  border-color: var(--accent-a);
+  box-shadow: 0 0 0 1px var(--accent-a), 0 0 8px color-mix(in srgb, var(--accent-a) 35%, transparent);
+}
+
+.random-commander {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 12px;
+  background: var(--bg-card);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.random-commander:hover:not(:disabled) {
+  border-color: var(--accent-a);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent-a) 10%, var(--bg-card));
+}
+
+.random-commander:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .tag-group {
   display: flex;
   flex-wrap: wrap;
