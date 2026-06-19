@@ -40,6 +40,8 @@ interface Props {
   disabled: boolean
 }
 
+const WUBRG = ['W', 'U', 'B', 'R', 'G'] as const
+
 const BUDGET_LABELS: { value: BudgetTier; label: string }[] = [
   { value: 'any', label: 'Any' },
   { value: 'low', label: '$' },
@@ -74,7 +76,13 @@ export function Sidebar(props: Props) {
   const [randomColors, setRandomColors] = useState<string[]>([])
 
   const toggleRandomColor = (c: string) =>
-    setRandomColors((cur) => (cur.includes(c) ? cur.filter((x) => x !== c) : [...cur, c]))
+    setRandomColors((cur) => {
+      const next = cur.includes(c) ? cur.filter((x) => x !== c) : [...cur.filter((x) => x !== 'C'), c]
+      return WUBRG.filter((x) => next.includes(x))
+    })
+
+  const toggleColorless = () =>
+    setRandomColors((cur) => (cur.includes('C') ? [] : ['C']))
 
   const rollRandomCommander = async () => {
     setRolling(true)
@@ -122,7 +130,7 @@ export function Sidebar(props: Props) {
           onSelect={(c) => props.onCommander(c ?? null)}
         />
         <div className="color-filter" role="group" aria-label="Random commander color identity">
-          {(['W', 'U', 'B', 'R', 'G'] as const).map((c) => (
+          {WUBRG.map((c) => (
             <button
               key={c}
               type="button"
@@ -133,6 +141,15 @@ export function Sidebar(props: Props) {
               <i className={`ms ms-${c.toLowerCase()} ms-cost`} />
             </button>
           ))}
+          <button
+            type="button"
+            className={`color-pip ${randomColors.includes('C') ? 'active' : ''}`}
+            onClick={toggleColorless}
+            aria-pressed={randomColors.includes('C')}
+            title="Colorless"
+          >
+            <i className="ms ms-c ms-cost" />
+          </button>
         </div>
         <button
           type="button"
@@ -143,7 +160,7 @@ export function Sidebar(props: Props) {
           {rolling
             ? 'Rolling…'
             : `🎲 ${props.commander ? 'Reroll' : 'Random'} ${
-                randomColors.length ? randomColors.join('') : 'Colorless'
+                randomColors.includes('C') ? 'Colorless' : randomColors.length ? randomColors.join('') : 'Any'
               } Commander`}
         </button>
       </section>

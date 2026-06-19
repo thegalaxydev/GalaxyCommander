@@ -59,8 +59,12 @@ export async function searchCommanders(
 }
 
 export async function fetchRandomCommander(colors: string[] = []): Promise<ScryCard | null> {
-  const id = colors.length ? colors.join('').toLowerCase() : 'c'
-  const q = `is:commander id=${id} ${legalOrUpcoming()}`.trim()
+  const idPart = colors.includes('C')
+    ? 'id=c'
+    : colors.length
+      ? `id=${colors.join('').toLowerCase()}`
+      : ''
+  const q = `is:commander ${idPart} ${legalOrUpcoming()}`.replace(/\s+/g, ' ').trim()
   try {
     const res = await fetch(`${API}/cards/random?q=${encodeURIComponent(q)}`)
     if (!res.ok) return null
