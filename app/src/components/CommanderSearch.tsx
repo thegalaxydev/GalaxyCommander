@@ -10,9 +10,10 @@ interface Props {
   onSelect: (card: ScryCard) => void
   baseFilter?: string
   placeholder?: string
+  excludeName?: string
 }
 
-export function CommanderSearch({ commander, onSelect, baseFilter, placeholder }: Props) {
+export function CommanderSearch({ commander, onSelect, baseFilter, placeholder, excludeName }: Props) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<ScryCard[]>([])
   const [defaults, setDefaults] = useState<ScryCard[]>([])
@@ -97,7 +98,9 @@ export function CommanderSearch({ commander, onSelect, baseFilter, placeholder }
           {query.trim().length < 2 && defaults.length > 0 && !loading && (
             <div className="search-section">Popular right now</div>
           )}
-          {(query.trim().length < 2 ? defaults : results).map((card) => (
+          {(query.trim().length < 2 ? defaults : results)
+            .filter((card) => !excludeName || card.name !== excludeName)
+            .map((card) => (
             <div
               key={card.id}
               className="search-result"

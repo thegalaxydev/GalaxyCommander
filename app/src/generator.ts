@@ -51,6 +51,51 @@ function fitsIdentity(card: ScryCard, identity: string[]): boolean {
   return card.color_identity.every((c) => id.has(c))
 }
 
+const BASIC_TYPE_COLOR: Record<string, string> = {
+  Plains: 'W',
+  Island: 'U',
+  Swamp: 'B',
+  Mountain: 'R',
+  Forest: 'G',
+}
+
+function offColorFetchLand(card: ScryCard, identity: string[]): boolean {
+  const type = (card.type_line ?? '').split('//')[0]
+  if (!/\bLand\b/.test(type)) return false
+  const text = cardOracle(card)
+  if (!/search your library for/i.test(text)) return false
+  const named = Object.keys(BASIC_TYPE_COLOR).filter((t) =>
+    new RegExp(`\\b${t}\\b`).test(text)
+  )
+  if (named.length === 0) return false
+  const id = new Set(identity)
+  return !named.some((t) => id.has(BASIC_TYPE_COLOR[t]))
+}
+
+function isLandsMatter(settings: BuildSettings): boolean {
+  if (settings.themes.some((t) => /\bland(fall|s)?\b/i.test(t))) return true
+  const text = `${cardOracle(settings.commander)} ${
+    settings.partner ? cardOracle(settings.partner) : ''
+  }`
+  return /landfall|whenever a land(?: card)? you control enters|play an additional land|for each land/i.test(
+    text
+  )
+}
+
+function isManaRock(card: ScryCard): boolean {
+  const type = (card.type_line ?? '').split('//')[0]
+  if (!/\bArtifact\b/.test(type) || /\bCreature\b/.test(type)) return false
+  return /\{T\}: Add/i.test(cardOracle(card))
+}
+
+function isLandRamp(card: ScryCard): boolean {
+  const text = cardOracle(card)
+  return (
+    /search your library for[^.]*\bland/i.test(text) &&
+    /onto the battlefield|into play/i.test(text)
+  )
+}
+
 interface CardWithPower extends ScryCard {
   power?: string
 }
@@ -155,6 +200,12 @@ function buildTargets(settings: BuildSettings, profile: PowerProfile): Targets {
     t.finishers += 1
   }
 
+  const landsMatter = isLandsMatter(settings)
+  if (landsMatter) {
+    t.lands += 2
+    t.ramp = Math.max(5, t.ramp - 3)
+  }
+
   t.ramp = Math.max(5, Math.min(15, Math.round(t.ramp * profileScale(profile.ramp))))
   t.draw = Math.max(5, Math.min(15, Math.round(t.draw * profileScale(profile.draw))))
   t.removal = Math.max(4, Math.min(15, Math.round(t.removal * profileScale(profile.interaction))))
@@ -182,7 +233,9 @@ function buildTargets(settings: BuildSettings, profile: PowerProfile): Targets {
   }
 
   const rampDelta = t.ramp - 8
-  t.lands = Math.max(31, Math.min(39, Math.round(t.lands - rampDelta * 0.6)))
+  const landFloor = landsMatter ? 37 : 31
+  const landCeiling = landsMatter ? 42 : 39
+  t.lands = Math.max(landFloor, Math.min(landCeiling, Math.round(t.lands - rampDelta * 0.6)))
   return t
 }
 
@@ -287,6 +340,7 @@ export async function generateDeck(
   const avoidTutorsEffective = settings.options.avoidTutors || profile.tutors <= 30
   const neverSet = new Set((settings.neverInclude ?? []).map((n) => n.toLowerCase()))
   const targets = buildTargets(settings, profile)
+  const landsMatter = isLandsMatter(settings)
   const personality = settings.personality ?? 'custom'
   const weights = resolveWeights(personality, settings.options)
   const deck: DeckCard[] = [
@@ -393,6 +447,7 @@ export async function generateDeck(
   const pool = new Map<Category, Candidate[]>()
   const addCandidate = (card: ScryCard, score: number, reason: string, cat?: Category) => {
     if (!isLegal(card) || !fitsIdentity(card, identity)) return
+    if (offColorFetchLand(card, identity)) return
     if (/\bBasic\b/.test(card.type_line)) return
     if (card.game_changer) return
     if (colorless && deadInColorless(card)) return
@@ -401,9 +456,14 @@ export async function generateDeck(
     if (avoidTutorsEffective && isTutor(card)) return
     if (avoidCombosEffective && settings.bracket <= 3 && isComboPiece(card)) return
     const category = cat ?? categorize(card)
+    let adjScore = score
+    if (landsMatter && category === 'Ramp') {
+      if (isLandRamp(card)) adjScore += 2.5
+      else if (isManaRock(card)) adjScore -= 2
+    }
     const list = pool.get(category) ?? []
     if (list.some((c) => c.card.name === card.name)) return
-    list.push({ card, score, reason })
+    list.push({ card, score: adjScore, reason })
     pool.set(category, list)
   }
 
@@ -677,7 +737,8 @@ function deckIdentityQuery(deck: Deck): string {
 
 export async function swapExpensiveCards(deck: Deck, maxPrice: number): Promise<{ deck: Deck; swapped: [string, string][] }> {
   const used = new Set(deck.cards.map((d) => d.card.name))
-  const colorless = unionIdentity(deck.commander, deck.settings.partner).length === 0
+  const identity = unionIdentity(deck.commander, deck.settings.partner)
+  const colorless = identity.length === 0
   const base = deckIdentityQuery(deck)
   const expensive = deck.cards.filter(
     (d) => d.category !== 'Commander' && !BASIC_NAMES.test(d.card.name) && cardPrice(d.card) > maxPrice
@@ -699,7 +760,8 @@ export async function swapExpensiveCards(deck: Deck, maxPrice: number): Promise<
         !used.has(c.name) &&
         isLegal(c) &&
         cardPrice(c) <= maxPrice &&
-        !(colorless && deadInColorless(c))
+        !(colorless && deadInColorless(c)) &&
+        !offColorFetchLand(c, identity)
     )
     if (!replacement) return d
     used.add(replacement.name)
@@ -718,7 +780,8 @@ export async function computeTieredUpgrades(deck: Deck): Promise<UpgradeTier[]> 
   const inDeck = new Set(deck.cards.map((d) => d.card.name))
   const usedOut = new Set<string>()
   const reservedIn = new Set<string>()
-  const colorless = unionIdentity(deck.commander, deck.settings.partner).length === 0
+  const identity = unionIdentity(deck.commander, deck.settings.partner)
+  const colorless = identity.length === 0
   const base = deckIdentityQuery(deck)
 
   const poolCats = ['Ramp', 'Card Draw', 'Removal', 'Board Wipes', 'Lands', 'Synergy', 'Finishers'] as Category[]
@@ -760,6 +823,7 @@ export async function computeTieredUpgrades(deck: Deck): Promise<UpgradeTier[]> 
         if (inDeck.has(c.name) || reservedIn.has(c.name)) return false
         if (!isLegal(c)) return false
         if (colorless && deadInColorless(c)) return false
+        if (offColorFetchLand(c, identity)) return false
         const p = cardPrice(c)
         if (p <= outPrice || p > cap) return false
         const inRank = c.edhrec_rank ?? 20000

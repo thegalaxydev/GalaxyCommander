@@ -42,6 +42,45 @@ interface Props {
 
 const WUBRG = ['W', 'U', 'B', 'R', 'G'] as const
 
+const COLOR_COMBO_NAMES: Record<string, string> = {
+  W: 'Mono-White',
+  U: 'Mono-Blue',
+  B: 'Mono-Black',
+  R: 'Mono-Red',
+  G: 'Mono-Green',
+  WU: 'Azorius',
+  WB: 'Orzhov',
+  WR: 'Boros',
+  WG: 'Selesnya',
+  UB: 'Dimir',
+  UR: 'Izzet',
+  UG: 'Simic',
+  BR: 'Rakdos',
+  BG: 'Golgari',
+  RG: 'Gruul',
+  WUB: 'Esper',
+  WUR: 'Jeskai',
+  WUG: 'Bant',
+  WBR: 'Mardu',
+  WBG: 'Abzan',
+  WRG: 'Naya',
+  UBR: 'Grixis',
+  UBG: 'Sultai',
+  URG: 'Temur',
+  BRG: 'Jund',
+  WUBR: 'Yore-Tiller',
+  WUBG: 'Witch-Maw',
+  WURG: 'Ink-Treader',
+  WBRG: 'Dune-Brood',
+  UBRG: 'Glint-Eye',
+  WUBRG: 'Five-Color',
+}
+
+function colorComboName(colors: string[]): string {
+  const key = WUBRG.filter((c) => colors.includes(c)).join('')
+  return COLOR_COMBO_NAMES[key] ?? key
+}
+
 const BUDGET_LABELS: { value: BudgetTier; label: string }[] = [
   { value: 'any', label: 'Any' },
   { value: 'low', label: '$' },
@@ -160,7 +199,11 @@ export function Sidebar(props: Props) {
           {rolling
             ? 'Rolling…'
             : `🎲 ${props.commander ? 'Reroll' : 'Random'} ${
-                randomColors.includes('C') ? 'Colorless' : randomColors.length ? randomColors.join('') : 'Any'
+                randomColors.includes('C')
+                  ? 'Colorless'
+                  : randomColors.length
+                    ? colorComboName(randomColors)
+                    : 'Any'
               } Commander`}
         </button>
       </section>
@@ -191,6 +234,7 @@ export function Sidebar(props: Props) {
               commander={props.partner}
               onSelect={(c) => props.onPartner(c ?? null)}
               baseFilter={partnerSearchFilter(mode)}
+              excludeName={props.commander.name}
               placeholder={
                 mode.kind === 'background'
                   ? 'Search background...'

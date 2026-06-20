@@ -4,6 +4,7 @@ import { cardOracle } from './scryfall'
 export type PartnerKind =
   | 'partner'
   | 'partner-with'
+  | 'partner-restricted'
   | 'friends-forever'
   | 'background'
   | 'doctor'
@@ -12,6 +13,7 @@ export type PartnerKind =
 export interface PartnerMode {
   kind: PartnerKind
   withName?: string
+  group?: string
   label: string
 }
 
@@ -21,6 +23,11 @@ export function partnerMode(card: ScryCard): PartnerMode | null {
     const match = cardOracle(card).match(/Partner with ([^\n(]+?)(?:\s*\(|\n|$)/)
     const withName = match?.[1].trim()
     if (withName) return { kind: 'partner-with', withName, label: `Partner with ${withName}` }
+  }
+  const restricted = cardOracle(card).match(/Partner\s*[—–-]\s*([^\n(]+?)(?:\s*\(|\n|$)/)
+  if (restricted?.[1]) {
+    const group = restricted[1].trim()
+    return { kind: 'partner-restricted', group, label: `Partner — ${group}` }
   }
   if (keywords.includes('partner')) return { kind: 'partner', label: 'Partner' }
   if (keywords.includes('friends forever'))
@@ -39,6 +46,8 @@ export function partnerSearchFilter(mode: PartnerMode): string {
       return 'is:commander keyword:partner -keyword:"partner with"'
     case 'partner-with':
       return `!"${mode.withName}"`
+    case 'partner-restricted':
+      return `is:commander keyword:partner o:"${mode.group}"`
     case 'friends-forever':
       return 'is:commander keyword:"friends forever"'
     case 'background':
