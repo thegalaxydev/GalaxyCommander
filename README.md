@@ -1,5 +1,7 @@
 # Galaxy Commander
 
+**Play it now in your browser at [commander.thegalaxy.dev](https://commander.thegalaxy.dev).**
+
 A Commander (EDH) deck generator. Pick a commander, set a bracket, budget, themes, and tags, and it assembles a tuned 100-card deck using real data:
 
 - **EDHREC** — per-commander inclusion rates and synergy scores drive card selection; the theme list in the sidebar comes from how the commander is actually built.
