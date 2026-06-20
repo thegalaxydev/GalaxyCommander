@@ -4,6 +4,7 @@ import { SvgIcon } from './Icons'
 import { identityInfo } from '../iconData'
 import { unionIdentity } from '../partner'
 import { GenProgress } from './GenProgress'
+import { ManaCost, renderSymbols } from './ManaCost'
 
 interface Props {
   commander: ScryCard | null
@@ -72,6 +73,11 @@ export function BuilderPanel(props: Props) {
               </div>
             </div>
             <hr className="builder-divider" />
+            <div className="builder-oracle">
+              <OracleBlock card={commander} />
+              {partner && <OracleBlock card={partner} />}
+            </div>
+            <hr className="builder-divider" />
             <p className="builder-blurb">
               {props.themes.length
                 ? `This deck will lean into ${props.themes.join(' and ')}, using ${
@@ -104,6 +110,62 @@ export function BuilderPanel(props: Props) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function OracleBlock({ card }: { card: ScryCard }) {
+  const faces =
+    card.card_faces && card.card_faces.length >= 2 ? card.card_faces : null
+  if (faces) {
+    return (
+      <div className="oracle-block">
+        {faces.map((face, i) => (
+          <OracleFace
+            key={i}
+            name={face.name}
+            mana={face.mana_cost ?? ''}
+            type={face.type_line ?? ''}
+            text={face.oracle_text ?? ''}
+          />
+        ))}
+      </div>
+    )
+  }
+  return (
+    <div className="oracle-block">
+      <OracleFace
+        name={card.name}
+        mana={card.mana_cost ?? ''}
+        type={card.type_line}
+        text={card.oracle_text ?? ''}
+      />
+    </div>
+  )
+}
+
+function OracleFace({
+  name,
+  mana,
+  type,
+  text,
+}: {
+  name: string
+  mana: string
+  type: string
+  text: string
+}) {
+  const lines = text.split('\n').filter((l) => l.trim().length > 0)
+  return (
+    <div className="oracle-face">
+      <div className="oracle-head">
+        <strong>{name.split(' //')[0]}</strong>
+        <ManaCost cost={mana} />
+      </div>
+      {type && <span className="oracle-type">{type}</span>}
+      {lines.map((line, i) => (
+        <p key={i}>{renderSymbols(line)}</p>
+      ))}
     </div>
   )
 }

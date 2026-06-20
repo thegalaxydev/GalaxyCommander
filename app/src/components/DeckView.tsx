@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ComboInfo, Deck, DeckCard, ScryCard, UpgradeTier } from '../types'
 import { CATEGORY_ORDER } from '../types'
-import { cardImage, cardPrice } from '../scryfall'
+import { cardImage, cardImageByName, cardPrice } from '../scryfall'
 import { analyzeDeck, avgCmc, deckHealth } from '../analysis'
 import { ManaCost } from './ManaCost'
 import { PlaytestPanel } from './PlaytestPanel'
@@ -49,6 +49,10 @@ export function DeckView({
     if (src) setHover({ src, y: Math.min(e.clientY, window.innerHeight - 360) })
   }
 
+  const showHoverName = (name: string, e: React.MouseEvent) => {
+    setHover({ src: cardImageByName(name, 'normal'), y: Math.min(e.clientY, window.innerHeight - 360) })
+  }
+
   return (
     <div className={`deck-view ${generating ? 'generating' : ''}`}>
       <nav className="deck-tabs">
@@ -63,7 +67,7 @@ export function DeckView({
       </nav>
 
       <div className="deck-tab-body">
-        {tab === 'Overview' && <Overview deck={deck} />}
+        {tab === 'Overview' && <Overview deck={deck} combos={combos} />}
         {tab === 'Decklist' && (
           <Decklist
             deck={deck}
@@ -73,7 +77,15 @@ export function DeckView({
             onLeave={() => setHover(null)}
           />
         )}
-        {tab === 'Combos' && <Combos combos={combos} loading={combosLoading} />}
+        {tab === 'Combos' && (
+          <Combos
+            combos={combos}
+            loading={combosLoading}
+            bracket={deck.settings.bracket}
+            onHover={showHoverName}
+            onLeave={() => setHover(null)}
+          />
+        )}
         {tab === 'Playtest' && <PlaytestPanel deck={deck} simIterations={simIterations} />}
         {tab === 'Upgrade Paths' && (
           <Upgrades upgrades={upgrades} combos={combos} onHover={showHover} onLeave={() => setHover(null)} />
@@ -107,9 +119,15 @@ export function DeckView({
   )
 }
 
-function Overview({ deck }: { deck: Deck }) {
+function Overview({
+  deck,
+  combos,
+}: {
+  deck: Deck
+  combos: { included: ComboInfo[]; almost: ComboInfo[] } | null
+}) {
   const { strengths, weaknesses } = analyzeDeck(deck)
-  const health = deckHealth(deck)
+  const health = deckHealth(deck, combos)
   const warnings = health.filter((h) => h.level === 'warn')
   const partner = deck.settings.partner
   const identity = identityInfo(unionIdentity(deck.commander, partner))
@@ -198,9 +216,11 @@ function Decklist({
   onHover: (card: ScryCard, e: React.MouseEvent) => void
   onLeave: () => void
 }) {
+  const gameChangers = deck.cards.filter((d) => d.card.game_changer)
+  const gcNames = new Set(gameChangers.map((d) => d.card.name))
   const groups = CATEGORY_ORDER.map((cat) => ({
     cat,
-    cards: deck.cards.filter((d) => d.category === cat),
+    cards: deck.cards.filter((d) => d.category === cat && !gcNames.has(d.card.name)),
   })).filter((g) => g.cards.length)
 
   const copyList = () => {
@@ -210,6 +230,30 @@ function Decklist({
     navigator.clipboard.writeText(text)
   }
 
+  const renderRow = (d: DeckCard) => (
+    <div
+      key={d.card.name}
+      className={`deck-row ${selected?.card.name === d.card.name ? 'selected' : ''}`}
+      onClick={() => onSelect(selected?.card.name === d.card.name ? null : d)}
+      onMouseEnter={(e) => onHover(d.card, e)}
+      onMouseLeave={onLeave}
+    >
+      <span className="deck-qty">{d.qty}</span>
+      <span className="deck-name">
+        {d.card.name.split(' //')[0]}
+        {d.card.game_changer && (
+          <span className="gc-badge" title="On the Commander Game Changers list">
+            GC
+          </span>
+        )}
+      </span>
+      <ManaCost cost={d.card.mana_cost ?? d.card.card_faces?.[0]?.mana_cost ?? ''} />
+      <span className="deck-price">
+        {cardPrice(d.card) > 0 ? `$${cardPrice(d.card).toFixed(2)}` : ''}
+      </span>
+    </div>
+  )
+
   return (
     <div className="decklist">
       <button type="button" className="copy-btn" onClick={copyList}>
@@ -217,28 +261,25 @@ function Decklist({
       </button>
       <p className="hint decklist-hint">Click a card to see why it was included.</p>
       <div className="decklist-cols">
+        {gameChangers.length > 0 && (
+          <section className="deck-group game-changers">
+            <h3>
+              ⚡ Game Changers ({gameChangers.reduce((n, d) => n + d.qty, 0)})
+            </h3>
+            <p className="gc-note">
+              Bracket-defining cards. Brackets 1–2 allow none, Bracket 3 allows up to 3, Bracket
+              4+ unlimited.
+            </p>
+            {gameChangers.map(renderRow)}
+          </section>
+        )}
         {groups.map((g) => (
           <section key={g.cat} className="deck-group">
             <h3>
               <SvgIcon name={CATEGORY_ICONS[g.cat]} size={13} /> {g.cat} (
               {g.cards.reduce((n, d) => n + d.qty, 0)})
             </h3>
-            {g.cards.map((d: DeckCard) => (
-              <div
-                key={d.card.name}
-                className={`deck-row ${selected?.card.name === d.card.name ? 'selected' : ''}`}
-                onClick={() => onSelect(selected?.card.name === d.card.name ? null : d)}
-                onMouseEnter={(e) => onHover(d.card, e)}
-                onMouseLeave={onLeave}
-              >
-                <span className="deck-qty">{d.qty}</span>
-                <span className="deck-name">{d.card.name.split(' //')[0]}</span>
-                <ManaCost cost={d.card.mana_cost ?? d.card.card_faces?.[0]?.mana_cost ?? ''} />
-                <span className="deck-price">
-                  {cardPrice(d.card) > 0 ? `$${cardPrice(d.card).toFixed(2)}` : ''}
-                </span>
-              </div>
-            ))}
+            {g.cards.map(renderRow)}
           </section>
         ))}
       </div>
@@ -246,12 +287,23 @@ function Decklist({
   )
 }
 
+function isGameEndingCombo(c: ComboInfo): boolean {
+  const text = `${c.produces.join(' ')} ${c.description}`.toLowerCase()
+  return /infinite|win the game|each opponent loses|wins? the game/.test(text)
+}
+
 function Combos({
   combos,
   loading,
+  bracket,
+  onHover,
+  onLeave,
 }: {
   combos: { included: ComboInfo[]; almost: ComboInfo[] } | null
   loading: boolean
+  bracket: number
+  onHover: (name: string, e: React.MouseEvent) => void
+  onLeave: () => void
 }) {
   if (loading) return <p className="hint pad">Searching Commander Spellbook for combo lines...</p>
   if (!combos || (!combos.included.length && !combos.almost.length))
@@ -261,26 +313,48 @@ function Combos({
         the More Competitive variant if you want compact win lines.
       </p>
     )
+  const illegalCombos =
+    bracket <= 3 ? combos.included.filter((c) => c.cards.length <= 2 && isGameEndingCombo(c)) : []
   return (
     <div className="combos">
+      {illegalCombos.length > 0 && (
+        <div className="combo-warning">
+          ⚠ This Bracket {bracket} deck contains {illegalCombos.length} compact two-card win
+          combo{illegalCombos.length > 1 ? 's' : ''}. Brackets 1–3 are not intended to run these —
+          cut a piece or move to Bracket 4+.
+        </div>
+      )}
       {combos.included.length > 0 && <h3>In This Deck</h3>}
       {combos.included.map((c, i) => (
-        <ComboCard key={i} combo={c} />
+        <ComboCard key={i} combo={c} onHover={onHover} onLeave={onLeave} />
       ))}
       {combos.almost.length > 0 && <h3>One Card Away</h3>}
       {combos.almost.map((c, i) => (
-        <ComboCard key={`a${i}`} combo={c} />
+        <ComboCard key={`a${i}`} combo={c} onHover={onHover} onLeave={onLeave} />
       ))}
     </div>
   )
 }
 
-function ComboCard({ combo }: { combo: ComboInfo }) {
+function ComboCard({
+  combo,
+  onHover,
+  onLeave,
+}: {
+  combo: ComboInfo
+  onHover: (name: string, e: React.MouseEvent) => void
+  onLeave: () => void
+}) {
   return (
     <div className="combo-card">
       <div className="combo-pieces">
         {combo.cards.map((name) => (
-          <span key={name} className={combo.missing?.includes(name) ? 'missing' : ''}>
+          <span
+            key={name}
+            className={combo.missing?.includes(name) ? 'missing' : ''}
+            onMouseEnter={(e) => onHover(name, e)}
+            onMouseLeave={onLeave}
+          >
             {name}
           </span>
         ))}

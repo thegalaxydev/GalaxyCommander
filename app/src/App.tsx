@@ -35,7 +35,7 @@ import { ChatPanel } from './components/ChatPanel'
 import { DeckBuilder } from './components/DeckBuilder'
 import { GenProgress } from './components/GenProgress'
 import { SettingsModal } from './components/SettingsModal'
-import { generatedDeckToCod, deckToCod, downloadCod, upsertSavedDeck } from './cod'
+import { generatedDeckToCod, deckToCod, downloadCod, downloadText, upsertSavedDeck } from './cod'
 import { applyPreset } from './personality'
 
 function initialGeneratorState(settings: AppSettings) {
@@ -360,6 +360,16 @@ export default function App() {
     }
   }
 
+  const exportText = async () => {
+    if (!deck) return
+    try {
+      await downloadText(generatedDeckToCod(deck).name, deck)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      window.alert(message)
+    }
+  }
+
   const saveToBuilder = () => {
     if (!deck) return
     const cod = generatedDeckToCod(deck)
@@ -467,6 +477,14 @@ export default function App() {
                   disabled={generating}
                 >
                   ⬇ Export .cod
+                </button>
+                <button
+                  type="button"
+                  className="new-build"
+                  onClick={() => void exportText()}
+                  disabled={generating}
+                >
+                  ⬇ Export .txt
                 </button>
                 <button
                   type="button"

@@ -25,7 +25,7 @@ export const GEN_STEPS = [
   'Checking Legality...',
 ]
 
-const BUDGET_CAP: Record<string, number> = { any: Infinity, low: 1.5, mid: 8, high: 30 }
+const BUDGET_CAP: Record<string, number> = { any: Infinity, low: 5, mid: 20, high: 50 }
 
 interface Candidate {
   card: ScryCard
@@ -180,6 +180,9 @@ function buildTargets(settings: BuildSettings, profile: PowerProfile): Targets {
   if (meta.includes('Stax-heavy')) {
     t.removal += 1
   }
+
+  const rampDelta = t.ramp - 8
+  t.lands = Math.max(31, Math.min(39, Math.round(t.lands - rampDelta * 0.6)))
   return t
 }
 
@@ -262,6 +265,13 @@ function profileTechPackages(profile: PowerProfile, options: BuildSettings['opti
   return packs
 }
 
+function gameChangerTarget(bracket: number): number {
+  if (bracket <= 2) return 0
+  if (bracket === 3) return 3
+  if (bracket === 4) return 8
+  return 12
+}
+
 export async function generateDeck(
   settings: BuildSettings,
   onProgress: ProgressFn
@@ -299,6 +309,42 @@ export async function generateDeck(
     else if (cat === 'Removal') targets.removal = Math.max(0, targets.removal - 1)
     else if (cat === 'Board Wipes') targets.wipes = Math.max(0, targets.wipes - 1)
     else if (cat === 'Finishers') targets.finishers = Math.max(0, targets.finishers - 1)
+  }
+
+  const gcTarget = gameChangerTarget(settings.bracket)
+  const gcAlready = deck.filter((d) => d.category !== 'Commander' && d.card.game_changer).length
+  let gcNeed = Math.max(0, gcTarget - gcAlready)
+  if (gcNeed > 0) {
+    const priceClause = cap === Infinity ? '' : `usd<=${cap}`
+    const gcPool = await searchCards(
+      `${identityQuery(identity, commanderNames)} is:gamechanger ${priceClause}`.trim(),
+      { order: 'edhrec', max: 50 }
+    )
+    for (const card of gcPool) {
+      if (gcNeed <= 0) break
+      if (used.has(card.name)) continue
+      if (!isLegal(card) || !fitsIdentity(card, identity)) continue
+      if (cardPrice(card) > cap) continue
+      if (neverSet.has(card.name.toLowerCase())) continue
+      if (colorless && deadInColorless(card)) continue
+      if (avoidTutorsEffective && isTutor(card)) continue
+      if (avoidCombosEffective && settings.bracket <= 3 && isComboPiece(card)) continue
+      const cat = categorize(card)
+      used.add(card.name)
+      deck.push({
+        card,
+        category: cat,
+        qty: 1,
+        reason: 'A Game Changer — a high-impact staple pulled in for this bracket.',
+      })
+      gcNeed--
+      if (cat === 'Lands') mustLands++
+      else if (cat === 'Ramp') targets.ramp = Math.max(0, targets.ramp - 1)
+      else if (cat === 'Card Draw') targets.draw = Math.max(0, targets.draw - 1)
+      else if (cat === 'Removal') targets.removal = Math.max(0, targets.removal - 1)
+      else if (cat === 'Board Wipes') targets.wipes = Math.max(0, targets.wipes - 1)
+      else if (cat === 'Finishers') targets.finishers = Math.max(0, targets.finishers - 1)
+    }
   }
 
   onProgress(0, deck)
@@ -348,6 +394,7 @@ export async function generateDeck(
   const addCandidate = (card: ScryCard, score: number, reason: string, cat?: Category) => {
     if (!isLegal(card) || !fitsIdentity(card, identity)) return
     if (/\bBasic\b/.test(card.type_line)) return
+    if (card.game_changer) return
     if (colorless && deadInColorless(card)) return
     if (neverSet.has(card.name.toLowerCase())) return
     if (cardPrice(card) > cap) return
@@ -537,6 +584,7 @@ export async function generateDeck(
     for (const card of filler) {
       if (remaining <= 0) break
       if (used.has(card.name) || !isLegal(card) || cardPrice(card) > cap) continue
+      if (card.game_changer) continue
       if (colorless && deadInColorless(card)) continue
       if (neverSet.has(card.name.toLowerCase())) continue
       used.add(card.name)

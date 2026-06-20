@@ -1,5 +1,5 @@
 import type { DeckCard } from '../types'
-import { curveBuckets, deckPrice, totalCards, typeCounts } from '../analysis'
+import { colorBalanceFromCards, curveBuckets, deckPrice, totalCards, typeCounts } from '../analysis'
 import { SvgIcon } from './Icons'
 import { CATEGORY_ICONS } from '../iconData'
 
@@ -11,6 +11,8 @@ export function StatsPanel({ cards }: { cards: DeckCard[] }) {
   const maxCurve = Math.max(1, ...curve)
   const types = typeCounts(cards).filter((t) => t.category !== 'Commander')
   const price = deckPrice(cards)
+  const balance = colorBalanceFromCards(cards)
+  const maxBalance = Math.max(1, ...balance.flatMap((b) => [b.sources, b.pips]))
 
   return (
     <div className="stats-panel">
@@ -38,6 +40,34 @@ export function StatsPanel({ cards }: { cards: DeckCard[] }) {
           ))}
         </div>
       </section>
+
+      {balance.length > 1 && (
+        <section>
+          <h3>Color Balance</h3>
+          <div className="color-balance">
+            {balance.map((b) => (
+              <div key={b.color} className="cb-row">
+                <i className={`ms ms-${b.color.toLowerCase()} ms-cost`} />
+                <div className="cb-bars">
+                  <div className="cb-bar sources" title={`${b.sources} mana sources`}>
+                    <div style={{ width: `${(b.sources / maxBalance) * 100}%` }} />
+                  </div>
+                  <div className="cb-bar pips" title={`${b.pips} colored pips required`}>
+                    <div style={{ width: `${(b.pips / maxBalance) * 100}%` }} />
+                  </div>
+                </div>
+                <span className="cb-num">
+                  {b.sources}
+                  <small>/{b.pips}p</small>
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="cb-legend">
+            <span className="cb-key sources" /> sources · <span className="cb-key pips" /> pips
+          </p>
+        </section>
+      )}
 
       <section>
         <h3>Card Types</h3>

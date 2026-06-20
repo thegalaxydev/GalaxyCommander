@@ -28,6 +28,8 @@ export interface ScryCard {
   card_faces?: ScryCardFace[]
   prices: { usd: string | null }
   edhrec_rank?: number
+  game_changer?: boolean
+  produced_mana?: string[]
   legalities: Record<string, string>
   released_at?: string
 }

@@ -1,5 +1,56 @@
-import type { Category, Deck, DeckCard } from './types'
+import type { Category, ComboInfo, Deck, DeckCard } from './types'
 import { cardPrice, cardOracle } from './scryfall'
+import { unionIdentity } from './partner'
+
+const WUBRG = ['W', 'U', 'B', 'R', 'G'] as const
+
+export interface ColorBalance {
+  color: string
+  sources: number
+  pips: number
+}
+
+function countPips(cost: string, color: string): number {
+  if (!cost) return 0
+  const matches = cost.match(/\{[^}]+\}/g) ?? []
+  return matches.filter((sym) => sym.includes(color)).length
+}
+
+function balanceForColors(cards: DeckCard[], colors: readonly string[]): ColorBalance[] {
+  return colors.map((color) => {
+    let pips = 0
+    let sources = 0
+    for (const d of cards) {
+      if (d.category === 'Commander') continue
+      if ((d.category === 'Lands' || d.category === 'Ramp') && (d.card.produced_mana ?? []).includes(color)) {
+        sources += d.qty
+      }
+      if (d.category !== 'Lands') {
+        const cost = d.card.mana_cost ?? d.card.card_faces?.[0]?.mana_cost ?? ''
+        pips += countPips(cost, color) * d.qty
+      }
+    }
+    return { color, sources, pips }
+  })
+}
+
+export function colorBalance(deck: Deck): ColorBalance[] {
+  const identity = new Set(unionIdentity(deck.commander, deck.settings.partner))
+  return balanceForColors(deck.cards, WUBRG.filter((c) => identity.has(c)))
+}
+
+export function colorBalanceFromCards(cards: DeckCard[]): ColorBalance[] {
+  return balanceForColors(cards, WUBRG).filter((b) => b.pips > 0 || b.sources > 0)
+}
+
+function recommendedSources(pips: number): number {
+  return Math.max(9, Math.min(17, Math.round(pips * 0.45) + 7))
+}
+
+function isGameEnding(combo: ComboInfo): boolean {
+  const text = `${combo.produces.join(' ')} ${combo.description}`.toLowerCase()
+  return /infinite|win the game|each opponent loses|wins? the game/.test(text)
+}
 
 export function curveBuckets(cards: DeckCard[]): number[] {
   const buckets = [0, 0, 0, 0, 0, 0]
@@ -40,7 +91,10 @@ export interface HealthItem {
   detail: string
 }
 
-export function deckHealth(deck: Deck): HealthItem[] {
+export function deckHealth(
+  deck: Deck,
+  combos?: { included: ComboInfo[]; almost: ComboInfo[] } | null
+): HealthItem[] {
   const items: HealthItem[] = []
   const cards = deck.cards
   const count = (cat: Category) =>
@@ -83,11 +137,12 @@ export function deckHealth(deck: Deck): HealthItem[] {
     `Good ramp density (${ramp} sources)`,
     '8-12 ramp pieces keeps you ahead of the table on mana.'
   )
+  const recLands = Math.max(31, Math.min(40, Math.round(34 + (curve - 3) * 2 - ramp * 0.3)))
   push(
-    lands < 33,
-    `Thin mana base (${lands} lands)`,
+    lands < recLands - 1,
+    `Thin mana base (${lands} lands, ~${recLands} recommended)`,
     `Stable mana base (${lands} lands)`,
-    'Fewer than 33 lands risks missing land drops in the early turns.'
+    `With an average mana value of ${curve.toFixed(2)} and ${ramp} ramp sources, around ${recLands} lands keeps your early land drops consistent.`
   )
   push(
     curve > 3.6,
@@ -119,6 +174,43 @@ export function deckHealth(deck: Deck): HealthItem[] {
     `Decent protection suite (${protection} pieces)`,
     'Hexproof, indestructible, and ward effects keep your key pieces alive.'
   )
+
+  const balance = colorBalance(deck)
+  if (balance.length > 1) {
+    const weak = balance.filter((b) => b.pips >= 5 && b.sources < recommendedSources(b.pips))
+    push(
+      weak.length > 0,
+      `Uneven color sources (${weak.map((w) => `${w.color} ${w.sources}/${recommendedSources(w.pips)}`).join(', ')})`,
+      'Balanced color sources across the mana base',
+      'Each heavily-used color generally wants 9–17 mana sources (per Frank Karsten\u2019s guidelines) to cast spells on curve. Add dual lands or fixing for the short colors.'
+    )
+  }
+
+  if (combos && deck.settings.bracket <= 3) {
+    const earlyCombos = combos.included.filter((c) => c.cards.length <= 2 && isGameEnding(c))
+    if (earlyCombos.length > 0) {
+      items.push({
+        level: 'warn',
+        message: `Two-card win combo${earlyCombos.length > 1 ? 's' : ''} in a Bracket ${deck.settings.bracket} deck (${earlyCombos.length})`,
+        detail: `Brackets 1–3 are not meant to run compact two-card infinite/win combos (e.g. ${earlyCombos[0].cards.join(' + ')}). Cut a piece or move to Bracket 4+ to stay within the bracket's expectations.`,
+      })
+    }
+  }
+
+  const gameChangers = cards
+    .filter((d) => d.card.game_changer)
+    .reduce((n, d) => n + d.qty, 0)
+  if (gameChangers > 0) {
+    const bracket = deck.settings.bracket
+    const limit = bracket <= 2 ? 0 : bracket === 3 ? 3 : Infinity
+    const limitLabel = limit === Infinity ? 'unlimited' : limit
+    push(
+      gameChangers > limit,
+      `Too many Game Changers (${gameChangers}/${limitLabel}) for Bracket ${bracket}`,
+      `Game Changers within Bracket ${bracket} limit (${gameChangers}/${limitLabel})`,
+      'Brackets 1–2 allow no Game Changers, Bracket 3 allows up to 3, and Bracket 4+ is unlimited. Cut Game Changers or raise the bracket to stay legal.'
+    )
+  }
 
   return items.sort((a, b) => (a.level === b.level ? 0 : a.level === 'warn' ? -1 : 1))
 }

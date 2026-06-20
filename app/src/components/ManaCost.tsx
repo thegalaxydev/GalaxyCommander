@@ -12,6 +12,16 @@ export function ManaCost({ cost }: { cost: string }) {
   )
 }
 
+export function renderSymbols(text: string) {
+  return text.split(/(\{[^}]+\})/g).map((part, i) => {
+    const m = part.match(/^\{([^}]+)\}$/)
+    if (!m) return part
+    const sym = m[1].toLowerCase().replace('/', '')
+    const cls = sym === 't' ? 'tap' : sym === 'q' ? 'untap' : sym
+    return <i key={i} className={`ms ms-${cls} ms-cost ms-shadow`} />
+  })
+}
+
 export function ColorPips({ identity }: { identity: string[] }) {
   const colors = identity.length ? identity : ['C']
   return (

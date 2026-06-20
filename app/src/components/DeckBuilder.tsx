@@ -1,13 +1,15 @@
 import { useMemo, useRef, useState } from 'react'
 import type { Category, DeckCard, ScryCard } from '../types'
 import { CATEGORY_ORDER } from '../types'
-import { categorize } from '../generator'
+import { categorize, deckFromCards } from '../generator'
 import { cardImage, cardPrice } from '../scryfall'
+import { deckHealth } from '../analysis'
 import { resolveCards } from '../edhrec'
 import {
   deckToCod,
   parseCod,
   downloadCod,
+  downloadCodText,
   loadSavedDecks,
   upsertSavedDeck,
   deleteSavedDeck,
@@ -73,15 +75,16 @@ export function DeckBuilder({ onAnalyze }: Props) {
     main: main.map(({ name: n, qty }) => ({ name: n.split(' //')[0], qty })),
   })
 
+  const commanderCard = side.find((e) => e.card)?.card ?? null
+  const partnerCard = side.filter((e) => e.card)[1]?.card ?? null
+
   const playtest = () => {
-    const commanderCard = side.find((e) => e.card)?.card
     if (!commanderCard) {
       window.alert(
         'Set a commander first — use the ★ button on a card to move it into the Commander zone.'
       )
       return
     }
-    const partnerCard = side.filter((e) => e.card)[1]?.card ?? null
     const cards: DeckCard[] = main
       .filter((e) => e.card)
       .map((e) => ({ card: e.card!, category: categorize(e.card!), qty: e.qty, reason: '' }))
@@ -95,6 +98,15 @@ export function DeckBuilder({ onAnalyze }: Props) {
   const exportDeck = async (deckName: string, xml: string) => {
     try {
       await downloadCod(deckName, xml)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      window.alert(message)
+    }
+  }
+
+  const exportDeckText = async (deckName: string, cod: CodDeck) => {
+    try {
+      await downloadCodText(deckName, cod)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       window.alert(message)
@@ -173,14 +185,19 @@ export function DeckBuilder({ onAnalyze }: Props) {
     }
   }
 
+  const gcEntries = main.filter((e) => e.card?.game_changer)
+  const gcNames = new Set(gcEntries.map((e) => e.name))
   const mainGroups = CATEGORY_ORDER.filter((c) => c !== 'Commander')
     .map((cat) => ({
       cat: cat as string,
-      entries: main.filter((e) => e.card && categorize(e.card) === cat),
+      entries: main.filter(
+        (e) => e.card && categorize(e.card) === cat && !gcNames.has(e.name)
+      ),
     }))
     .filter((g) => g.entries.length)
   const unknown = main.filter((e) => !e.card)
   if (unknown.length) mainGroups.push({ cat: 'Unrecognized', entries: unknown })
+  if (gcEntries.length) mainGroups.unshift({ cat: 'Game Changers', entries: gcEntries })
 
   return (
     <div className="app builder-view">
@@ -266,6 +283,14 @@ export function DeckBuilder({ onAnalyze }: Props) {
           >
             ⬇ Export .cod
           </button>
+          <button
+            type="button"
+            className="new-build"
+            onClick={() => void exportDeckText(name.trim() || 'deck', toCodDeck())}
+            disabled={total === 0}
+          >
+            ⬇ Export .txt
+          </button>
         </div>
 
         <div className="builder-search">
@@ -309,11 +334,18 @@ export function DeckBuilder({ onAnalyze }: Props) {
             )}
             <div className="decklist-cols">
               {mainGroups.map((g) => (
-                <section key={g.cat} className="deck-group">
+                <section
+                  key={g.cat}
+                  className={`deck-group ${g.cat === 'Game Changers' ? 'game-changers' : ''}`}
+                >
                   <h3>
-                    {CATEGORY_ICONS[g.cat as Category] && (
-                      <SvgIcon name={CATEGORY_ICONS[g.cat as Category]} size={13} />
-                    )}{' '}
+                    {g.cat === 'Game Changers' ? (
+                      '⚡ '
+                    ) : CATEGORY_ICONS[g.cat as Category] ? (
+                      <>
+                        <SvgIcon name={CATEGORY_ICONS[g.cat as Category]} size={13} />{' '}
+                      </>
+                    ) : null}
                     {g.cat} ({g.entries.reduce((n, e) => n + e.qty, 0)})
                   </h3>
                   {g.entries.map((e) => (
@@ -337,11 +369,53 @@ export function DeckBuilder({ onAnalyze }: Props) {
 
       <aside className="right">
         <StatsPanel cards={statsCards} />
+        {commanderCard && main.some((e) => e.card) && (
+          <BuilderHealth commander={commanderCard} partner={partnerCard} cards={statsCards} />
+        )}
       </aside>
 
       {hover && (
         <img className="card-preview" src={hover.src} style={{ top: hover.y }} alt="" />
       )}
+    </div>
+  )
+}
+
+function BuilderHealth({
+  commander,
+  partner,
+  cards,
+}: {
+  commander: ScryCard
+  partner: ScryCard | null
+  cards: DeckCard[]
+}) {
+  const deck = useMemo(
+    () => deckFromCards(commander, partner, cards),
+    [commander, partner, cards]
+  )
+  const health = deckHealth(deck)
+  const warnings = health.filter((h) => h.level === 'warn')
+  return (
+    <div className="deck-health builder-health">
+      <h3>
+        Deck Health{' '}
+        <span className={`health-badge ${warnings.length ? 'warn' : 'ok'}`}>
+          {warnings.length
+            ? `${warnings.length} warning${warnings.length > 1 ? 's' : ''}`
+            : 'All clear'}
+        </span>
+      </h3>
+      <div className="health-list">
+        {health.map((item) => (
+          <details key={item.message} className={`health-item ${item.level}`}>
+            <summary>
+              {item.level === 'warn' ? '⚠' : '✓'} {item.message}
+            </summary>
+            <p>{item.detail}</p>
+          </details>
+        ))}
+      </div>
     </div>
   )
 }
@@ -371,7 +445,14 @@ function BuilderRow({
       onMouseLeave={onLeave}
     >
       <span className="deck-qty">{entry.qty}</span>
-      <span className="deck-name">{entry.name.split(' //')[0]}</span>
+      <span className="deck-name">
+        {entry.name.split(' //')[0]}
+        {card?.game_changer && (
+          <span className="gc-badge" title="On the Commander Game Changers list">
+            GC
+          </span>
+        )}
+      </span>
       {card && <ManaCost cost={card.mana_cost ?? card.card_faces?.[0]?.mana_cost ?? ''} />}
       {card && (
         <span className="deck-price">

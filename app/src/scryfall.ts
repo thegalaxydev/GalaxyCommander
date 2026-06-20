@@ -91,6 +91,11 @@ export function cardImage(card: ScryCard, size: 'small' | 'normal' | 'art_crop' 
   return uris?.[size] ?? uris?.normal ?? ''
 }
 
+export function cardImageByName(name: string, version: 'small' | 'normal' = 'normal'): string {
+  const exact = name.split(' //')[0]
+  return `https://api.scryfall.com/cards/named?format=image&version=${version}&exact=${encodeURIComponent(exact)}`
+}
+
 export function cardOracle(card: ScryCard): string {
   if (card.oracle_text) return card.oracle_text
   return (card.card_faces ?? []).map((f) => f.oracle_text ?? '').join('\n')

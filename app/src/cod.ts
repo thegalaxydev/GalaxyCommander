@@ -97,20 +97,27 @@ function sanitizeFilename(name: string): string {
   return cleaned || 'deck'
 }
 
-export async function downloadCod(filename: string, xml: string) {
+async function saveTextFile(
+  filename: string,
+  contents: string,
+  ext: string,
+  filterName: string,
+  mime: string
+) {
   const safe = sanitizeFilename(filename)
-  const fullName = /\.cod$/i.test(safe) ? safe : `${safe}.cod`
+  const extRe = new RegExp(`\\.${ext}$`, 'i')
+  const fullName = extRe.test(safe) ? safe : `${safe}.${ext}`
 
   if (isTauri()) {
     const { save } = await import('@tauri-apps/plugin-dialog')
     const { invoke } = await import('@tauri-apps/api/core')
     const path = await save({
       defaultPath: fullName,
-      filters: [{ name: 'Cockatrice Deck', extensions: ['cod'] }],
+      filters: [{ name: filterName, extensions: [ext] }],
     })
     if (!path) return
     try {
-      await invoke('write_text_file', { path, contents: xml })
+      await invoke('write_text_file', { path, contents })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       throw new Error(`Failed to save deck file: ${message}`)
@@ -118,7 +125,7 @@ export async function downloadCod(filename: string, xml: string) {
     return
   }
 
-  const blob = new Blob([xml], { type: 'application/xml;charset=utf-8' })
+  const blob = new Blob([contents], { type: mime })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -130,6 +137,46 @@ export async function downloadCod(filename: string, xml: string) {
     a.remove()
     URL.revokeObjectURL(url)
   }, 500)
+}
+
+export async function downloadCod(filename: string, xml: string) {
+  await saveTextFile(filename, xml, 'cod', 'Cockatrice Deck', 'application/xml;charset=utf-8')
+}
+
+export function deckToText(deck: Deck): string {
+  const line = (d: Deck['cards'][number]) => `${d.qty} ${d.card.name.split(' //')[0]}`
+  const commanders = deck.cards.filter((d) => d.category === 'Commander')
+  const main = deck.cards.filter((d) => d.category !== 'Commander')
+  const out: string[] = []
+  if (commanders.length) {
+    out.push('Commander')
+    out.push(...commanders.map(line))
+    out.push('')
+    out.push('Deck')
+  }
+  out.push(...main.map(line))
+  return out.join('\n') + '\n'
+}
+
+export async function downloadText(filename: string, deck: Deck) {
+  await saveTextFile(filename, deckToText(deck), 'txt', 'Decklist', 'text/plain;charset=utf-8')
+}
+
+export function codToText(cod: CodDeck): string {
+  const line = (c: CodEntry) => `${c.qty} ${c.name.split(' //')[0]}`
+  const out: string[] = []
+  if (cod.side.length) {
+    out.push('Commander')
+    out.push(...cod.side.map(line))
+    out.push('')
+    out.push('Deck')
+  }
+  out.push(...cod.main.map(line))
+  return out.join('\n') + '\n'
+}
+
+export async function downloadCodText(filename: string, cod: CodDeck) {
+  await saveTextFile(filename, codToText(cod), 'txt', 'Decklist', 'text/plain;charset=utf-8')
 }
 
 export interface SavedDeck {

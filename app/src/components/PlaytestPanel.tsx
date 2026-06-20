@@ -3,8 +3,9 @@ import type { Deck } from '../types'
 import { simulateHands, drawSampleHand, type SampleHand } from '../simulator'
 import { cardImage } from '../scryfall'
 import { GoldfishPanel } from './GoldfishPanel'
+import { SandboxPanel } from './SandboxPanel'
 
-type PlayMode = 'sim' | 'goldfish'
+type PlayMode = 'sim' | 'goldfish' | 'table'
 
 export function PlaytestPanel({ deck, simIterations }: { deck: Deck; simIterations: number }) {
   const [mode, setMode] = useState<PlayMode>('sim')
@@ -28,9 +29,18 @@ export function PlaytestPanel({ deck, simIterations }: { deck: Deck; simIteratio
         >
           Goldfish
         </button>
+        <button
+          type="button"
+          className={mode === 'table' ? 'active' : ''}
+          onClick={() => setMode('table')}
+        >
+          Table (Free Play)
+        </button>
       </div>
 
-      {mode === 'goldfish' ? (
+      {mode === 'table' ? (
+        <SandboxPanel key={deck.commander.id} deck={deck} />
+      ) : mode === 'goldfish' ? (
         <GoldfishPanel deck={deck} />
       ) : (
         <>
