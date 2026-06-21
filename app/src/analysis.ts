@@ -52,6 +52,95 @@ function isGameEnding(combo: ComboInfo): boolean {
   return /infinite|win the game|each opponent loses|wins? the game/.test(text)
 }
 
+const BRACKET_LABELS: Record<number, string> = {
+  1: 'Exhibition',
+  2: 'Core',
+  3: 'Upgraded',
+  4: 'Optimized',
+  5: 'cEDH',
+}
+
+const MLD_NAMES = new Set(
+  [
+    'Armageddon',
+    'Ravages of War',
+    'Catastrophe',
+    'Decree of Annihilation',
+    'Jokulhaups',
+    'Obliterate',
+    'Impending Disaster',
+    'Cataclysm',
+    'Winter Orb',
+    'Static Orb',
+    'Stasis',
+    'Back to Basics',
+  ].map((n) => n.toLowerCase())
+)
+
+export interface BracketEstimate {
+  bracket: number
+  label: string
+  reasons: string[]
+}
+
+export function estimateBracketFromCards(
+  cards: DeckCard[],
+  combos?: { included: ComboInfo[] } | null
+): BracketEstimate {
+  const nonCommander = cards.filter((d) => d.category !== 'Commander')
+  const sum = (list: DeckCard[]) => list.reduce((n, d) => n + d.qty, 0)
+
+  const gameChangers = sum(cards.filter((d) => d.card.game_changer))
+  const massLandDenial = sum(
+    nonCommander.filter(
+      (d) =>
+        MLD_NAMES.has(d.card.name.split(' //')[0].toLowerCase()) ||
+        /destroy all lands|each player sacrifices?[^.]*lands/i.test(cardOracle(d.card))
+    )
+  )
+  const extraTurns = sum(
+    nonCommander.filter((d) => /take an extra turn/i.test(cardOracle(d.card)))
+  )
+  const tutors = sum(
+    nonCommander.filter((d) => {
+      const o = cardOracle(d.card)
+      return /search your library for (a|an|up to)/i.test(o) && !/basic land/i.test(o)
+    })
+  )
+  const twoCardCombos = (combos?.included ?? []).filter(
+    (c) => c.cards.length <= 2 && isGameEnding(c)
+  ).length
+
+  const reasons: string[] = []
+  if (gameChangers) reasons.push(`${gameChangers} Game Changer${gameChangers > 1 ? 's' : ''}`)
+  if (twoCardCombos) reasons.push(`${twoCardCombos} two-card win combo${twoCardCombos > 1 ? 's' : ''}`)
+  if (massLandDenial) reasons.push(`${massLandDenial} mass land denial piece${massLandDenial > 1 ? 's' : ''}`)
+  if (extraTurns) reasons.push(`${extraTurns} extra-turn spell${extraTurns > 1 ? 's' : ''}`)
+  if (tutors) reasons.push(`${tutors} tutor${tutors > 1 ? 's' : ''}`)
+
+  let bracket: number
+  if (gameChangers >= 8 && twoCardCombos >= 2) {
+    bracket = 5
+  } else if (gameChangers > 3 || massLandDenial > 0 || twoCardCombos > 0 || extraTurns >= 2) {
+    bracket = 4
+  } else if (gameChangers >= 1 || tutors >= 3 || extraTurns >= 1) {
+    bracket = 3
+  } else {
+    bracket = 2
+  }
+
+  if (!reasons.length) reasons.push('No Game Changers, mass land denial, or compact combos detected')
+
+  return { bracket, label: BRACKET_LABELS[bracket], reasons }
+}
+
+export function estimateBracket(
+  deck: Deck,
+  combos?: { included: ComboInfo[] } | null
+): BracketEstimate {
+  return estimateBracketFromCards(deck.cards, combos)
+}
+
 export function curveBuckets(cards: DeckCard[]): number[] {
   const buckets = [0, 0, 0, 0, 0, 0]
   for (const d of cards) {

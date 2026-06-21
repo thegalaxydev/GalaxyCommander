@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { ComboInfo, Deck, DeckCard, ScryCard, UpgradeTier } from '../types'
 import { CATEGORY_ORDER } from '../types'
 import { cardImage, cardImageByName, cardPrice } from '../scryfall'
-import { analyzeDeck, avgCmc, deckHealth } from '../analysis'
+import { analyzeDeck, avgCmc, deckHealth, estimateBracket } from '../analysis'
 import { ManaCost } from './ManaCost'
 import { PlaytestPanel } from './PlaytestPanel'
 import { CardDetailPanel } from './CardDetailPanel'
@@ -129,6 +129,7 @@ function Overview({
   const { strengths, weaknesses } = analyzeDeck(deck)
   const health = deckHealth(deck, combos)
   const warnings = health.filter((h) => h.level === 'warn')
+  const bracketEst = estimateBracket(deck, combos)
   const partner = deck.settings.partner
   const identity = identityInfo(unionIdentity(deck.commander, partner))
   return (
@@ -163,6 +164,12 @@ function Overview({
         </div>
       </div>
       <p className="overview-desc">{deck.description}</p>
+      <div className="perceived-bracket">
+        <span className={`pb-badge b${bracketEst.bracket}`}>
+          Perceived Bracket {bracketEst.bracket} · {bracketEst.label}
+        </span>
+        <span className="pb-reasons">{bracketEst.reasons.join(' · ')}</span>
+      </div>
       <div className="overview-cols">
         <div>
           <h3>Strengths</h3>
@@ -328,7 +335,7 @@ function Combos({
       {combos.included.map((c, i) => (
         <ComboCard key={i} combo={c} onHover={onHover} onLeave={onLeave} />
       ))}
-      {combos.almost.length > 0 && <h3>One Card Away</h3>}
+      {combos.almost.length > 0 && <h3>Potential Combos (add 1–2 cards)</h3>}
       {combos.almost.map((c, i) => (
         <ComboCard key={`a${i}`} combo={c} onHover={onHover} onLeave={onLeave} />
       ))}

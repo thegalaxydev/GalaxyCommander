@@ -1884,6 +1884,45 @@ button {
   color: var(--text);
 }
 
+.perceived-bracket {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 16px 0 4px;
+}
+
+.perceived-bracket.compact {
+  margin: 0 0 14px;
+}
+
+.pb-badge {
+  align-self: flex-start;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--accent-gradient);
+}
+
+.pb-badge.b2 {
+  background: linear-gradient(90deg, #3ad29f, #2bb673);
+}
+.pb-badge.b3 {
+  background: linear-gradient(90deg, #6b8bff, #8a7bff);
+}
+.pb-badge.b4 {
+  background: linear-gradient(90deg, #ff9d5c, #ff6b6b);
+}
+.pb-badge.b5 {
+  background: linear-gradient(90deg, #ff5c8a, #d6336c);
+}
+
+.pb-reasons {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
 .deck-health {
   margin-top: 18px;
 }

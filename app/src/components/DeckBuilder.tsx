@@ -3,7 +3,7 @@ import type { Category, DeckCard, ScryCard } from '../types'
 import { CATEGORY_ORDER } from '../types'
 import { categorize, deckFromCards } from '../generator'
 import { cardImage, cardPrice } from '../scryfall'
-import { deckHealth } from '../analysis'
+import { deckHealth, estimateBracket } from '../analysis'
 import { resolveCards } from '../edhrec'
 import {
   deckToCod,
@@ -396,8 +396,15 @@ function BuilderHealth({
   )
   const health = deckHealth(deck)
   const warnings = health.filter((h) => h.level === 'warn')
+  const bracketEst = estimateBracket(deck)
   return (
     <div className="deck-health builder-health">
+      <div className="perceived-bracket compact">
+        <span className={`pb-badge b${bracketEst.bracket}`}>
+          Perceived Bracket {bracketEst.bracket} · {bracketEst.label}
+        </span>
+        <span className="pb-reasons">{bracketEst.reasons.join(' · ')}</span>
+      </div>
       <h3>
         Deck Health{' '}
         <span className={`health-badge ${warnings.length ? 'warn' : 'ok'}`}>
