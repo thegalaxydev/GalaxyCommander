@@ -41,8 +41,9 @@ function identityQuery(identity: string[], excludeNames: string[]): string {
   return `${legalOrUpcoming()} id<=${id} ${excludes}`
 }
 
-function isLegal(card: ScryCard): boolean {
+function isLegal(card: ScryCard, noSpoilers = false): boolean {
   if (card.legalities?.commander === 'legal') return true
+  if (noSpoilers) return false
   return !!card.released_at && new Date(card.released_at) > new Date()
 }
 
@@ -70,6 +71,23 @@ function offColorFetchLand(card: ScryCard, identity: string[]): boolean {
   if (named.length === 0) return false
   const id = new Set(identity)
   return !named.some((t) => id.has(BASIC_TYPE_COLOR[t]))
+}
+
+function usesAttractions(card: ScryCard): boolean {
+  return /\battraction/i.test(cardOracle(card))
+}
+
+async function buildAttractions(): Promise<DeckCard[]> {
+  const cards = await searchCards('t:attraction', { order: 'edhrec', max: 10 })
+  const seen = new Set<string>()
+  const out: DeckCard[] = []
+  for (const card of cards) {
+    if (seen.has(card.name)) continue
+    seen.add(card.name)
+    out.push({ card, category: 'Synergy', qty: 1, reason: 'Part of your Attraction deck (sideboard).' })
+    if (out.length >= 10) break
+  }
+  return out
 }
 
 function isLandsMatter(settings: BuildSettings): boolean {
@@ -341,6 +359,7 @@ export async function generateDeck(
   const neverSet = new Set((settings.neverInclude ?? []).map((n) => n.toLowerCase()))
   const targets = buildTargets(settings, profile)
   const landsMatter = isLandsMatter(settings)
+  const noSpoilers = !!settings.options.noSpoilers
   const personality = settings.personality ?? 'custom'
   const weights = resolveWeights(personality, settings.options)
   const deck: DeckCard[] = [
@@ -377,7 +396,7 @@ export async function generateDeck(
     for (const card of gcPool) {
       if (gcNeed <= 0) break
       if (used.has(card.name)) continue
-      if (!isLegal(card) || !fitsIdentity(card, identity)) continue
+      if (!isLegal(card, noSpoilers) || !fitsIdentity(card, identity)) continue
       if (cardPrice(card) > cap) continue
       if (neverSet.has(card.name.toLowerCase())) continue
       if (colorless && deadInColorless(card)) continue
@@ -446,7 +465,7 @@ export async function generateDeck(
 
   const pool = new Map<Category, Candidate[]>()
   const addCandidate = (card: ScryCard, score: number, reason: string, cat?: Category) => {
-    if (!isLegal(card) || !fitsIdentity(card, identity)) return
+    if (!isLegal(card, noSpoilers) || !fitsIdentity(card, identity)) return
     if (offColorFetchLand(card, identity)) return
     if (/\bBasic\b/.test(card.type_line)) return
     if (card.game_changer) return
@@ -669,12 +688,15 @@ export async function generateDeck(
   )
 
   const power = estimatePower(settings, finalDeck)
+  const wantsAttractions = usesAttractions(commander) || (!!partner && usesAttractions(partner))
+  const attractions = wantsAttractions ? await buildAttractions() : undefined
   return {
     commander,
     cards: finalDeck,
     settings,
     power,
     description: describeDeck(settings, power),
+    ...(attractions && attractions.length ? { attractions } : {}),
   }
 }
 
@@ -704,6 +726,8 @@ export function deckFromCards(
       avoidCombos: false,
       avoidTutors: false,
       latestSets: true,
+      noSpoilers: false,
+      allowUnsetCards: false,
     },
     powerProfile: DEFAULT_PROFILE,
     meta: [],
@@ -758,7 +782,7 @@ export async function swapExpensiveCards(deck: Deck, maxPrice: number): Promise<
     const replacement = pool.find(
       (c) =>
         !used.has(c.name) &&
-        isLegal(c) &&
+        isLegal(c, !!deck.settings.options.noSpoilers) &&
         cardPrice(c) <= maxPrice &&
         !(colorless && deadInColorless(c)) &&
         !offColorFetchLand(c, identity)
@@ -821,7 +845,7 @@ export async function computeTieredUpgrades(deck: Deck): Promise<UpgradeTier[]> 
       const pool = pools.get(out.category) ?? []
       const replacement = pool.find((c) => {
         if (inDeck.has(c.name) || reservedIn.has(c.name)) return false
-        if (!isLegal(c)) return false
+        if (!isLegal(c, !!deck.settings.options.noSpoilers)) return false
         if (colorless && deadInColorless(c)) return false
         if (offColorFetchLand(c, identity)) return false
         const p = cardPrice(c)
@@ -953,7 +977,10 @@ function describeDeck(settings: BuildSettings, power: number): string {
   if (settings.tags.includes('Control')) styles.push('controls the board until it can take over')
   if (settings.tags.includes('Topdeck')) styles.push('sculpts its draws from the top of the library')
   if (settings.tags.includes('Tribal')) styles.push('leans on tribal synergies')
-  const style = styles.length ? styles.join(' and ') : `builds toward a decisive ${themes} endgame`
+  const uniqueStyles = [...new Set(styles)]
+  const style = uniqueStyles.length
+    ? uniqueStyles.join(' and ')
+    : `builds toward a decisive ${themes} endgame`
   const bracketWord =
     settings.bracket <= 2 ? 'a relaxed, social' : settings.bracket === 3 ? 'a tuned mid-power' : 'a high-power'
   return `This ${name} deck focuses on ${themes}, and ${style}. It is built for ${bracketWord} table at roughly ${power}/10 power.`

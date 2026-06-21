@@ -282,6 +282,17 @@ function Decklist({
             {g.cards.map(renderRow)}
           </section>
         ))}
+        {deck.attractions && deck.attractions.length > 0 && (
+          <section className="deck-group">
+            <h3>
+              🎡 Attractions ({deck.attractions.reduce((n, d) => n + d.qty, 0)})
+            </h3>
+            <p className="gc-note">
+              A separate Attraction deck — exported to the sideboard, not part of the 99.
+            </p>
+            {deck.attractions.map(renderRow)}
+          </section>
+        )}
       </div>
     </div>
   )

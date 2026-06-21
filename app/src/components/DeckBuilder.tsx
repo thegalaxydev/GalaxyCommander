@@ -13,6 +13,7 @@ import {
   loadSavedDecks,
   upsertSavedDeck,
   deleteSavedDeck,
+  codCardName,
   type CodDeck,
   type CodEntry,
   type SavedDeck,
@@ -71,8 +72,8 @@ export function DeckBuilder({ onAnalyze }: Props) {
 
   const toCodDeck = (): CodDeck => ({
     name: name.trim() || 'Untitled Deck',
-    side: side.map(({ name: n, qty }) => ({ name: n.split(' //')[0], qty })),
-    main: main.map(({ name: n, qty }) => ({ name: n.split(' //')[0], qty })),
+    side: side.map((e) => ({ name: e.card ? codCardName(e.card) : e.name, qty: e.qty })),
+    main: main.map((e) => ({ name: e.card ? codCardName(e.card) : e.name, qty: e.qty })),
   })
 
   const commanderCard = side.find((e) => e.card)?.card ?? null

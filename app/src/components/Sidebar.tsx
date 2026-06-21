@@ -94,6 +94,8 @@ const OPTION_LABELS: { key: keyof AdvancedOptions; label: string }[] = [
   { key: 'avoidCombos', label: 'Avoid Infinite Combos' },
   { key: 'avoidTutors', label: 'Avoid Tutors' },
   { key: 'latestSets', label: 'Use Latest Sets' },
+  { key: 'noSpoilers', label: 'No Spoilers (released cards only)' },
+  { key: 'allowUnsetCards', label: 'Allow Unset / Illegal Cards' },
 ]
 
 const PROFILE_LABELS: { key: keyof PowerProfile; label: string }[] = [

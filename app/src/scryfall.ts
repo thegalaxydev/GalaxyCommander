@@ -34,12 +34,18 @@ export async function searchCards(
 }
 
 let allowUnsetCards = false
+let noSpoilers = false
 
 export function setAllowUnsetCards(allow: boolean): void {
   allowUnsetCards = allow
 }
 
+export function setNoSpoilers(on: boolean): void {
+  noSpoilers = on
+}
+
 export function legalOrUpcoming(): string {
+  if (noSpoilers) return 'legal:commander'
   if (allowUnsetCards) return ''
   return `(legal:commander or date>${new Date().toISOString().slice(0, 10)})`
 }

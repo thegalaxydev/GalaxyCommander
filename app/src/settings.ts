@@ -26,7 +26,6 @@ export interface AppSettings {
   generatorDefaults: SavedGeneratorDefaults
   simIterations: number
   disableCardPreviews: boolean
-  allowUnsetCards: boolean
   uiPreset: UiPreset
   accentMode: AccentMode
   showStarfield: boolean
@@ -41,6 +40,8 @@ export const DEFAULT_OPTIONS: AdvancedOptions = {
   avoidCombos: false,
   avoidTutors: false,
   latestSets: true,
+  noSpoilers: false,
+  allowUnsetCards: false,
 }
 
 export function defaultGeneratorDefaults(): SavedGeneratorDefaults {
@@ -66,7 +67,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   generatorDefaults: defaultGeneratorDefaults(),
   simIterations: 1000,
   disableCardPreviews: false,
-  allowUnsetCards: false,
   uiPreset: 'galaxy',
   accentMode: 'commander',
   showStarfield: true,

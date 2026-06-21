@@ -17,6 +17,7 @@ export interface ScryCard {
   id: string
   oracle_id: string
   name: string
+  layout?: string
   mana_cost?: string
   cmc: number
   type_line: string
@@ -72,6 +73,8 @@ export interface AdvancedOptions {
   avoidCombos: boolean
   avoidTutors: boolean
   latestSets: boolean
+  noSpoilers: boolean
+  allowUnsetCards: boolean
 }
 
 export interface PowerProfile {
@@ -122,6 +125,7 @@ export interface Deck {
   settings: BuildSettings
   power: number
   description: string
+  attractions?: DeckCard[]
 }
 
 export interface ComboInfo {

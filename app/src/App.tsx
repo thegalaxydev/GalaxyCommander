@@ -17,7 +17,7 @@ import { GEN_STEPS, computeTieredUpgrades, deckFromCards, generateDeck, swapExpe
 import { findCombos } from './combos'
 import { commanderSlug, fetchEdhrecPage, fetchEdhrecPageBySlug, type EdhrecTheme } from './edhrec'
 import { unionIdentity } from './partner'
-import { setAllowUnsetCards } from './scryfall'
+import { setAllowUnsetCards, setNoSpoilers } from './scryfall'
 import { applyAppAppearance } from './themes'
 import { handleChat, type VariantKind } from './chat'
 import { askLlm, llmConfigured } from './llmChat'
@@ -107,8 +107,9 @@ export default function App() {
   }, [appSettings, commander, partner])
 
   useEffect(() => {
-    setAllowUnsetCards(appSettings.allowUnsetCards)
-  }, [appSettings.allowUnsetCards])
+    setAllowUnsetCards(options.allowUnsetCards)
+    setNoSpoilers(options.noSpoilers)
+  }, [options.allowUnsetCards, options.noSpoilers])
 
   const applyPersonalityPreset = (id: Exclude<DeckPersonality, 'custom'>) => {
     const next = applyPreset(id, options)

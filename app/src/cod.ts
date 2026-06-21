@@ -1,4 +1,11 @@
-import type { Deck } from './types'
+import type { Deck, ScryCard } from './types'
+
+const FULL_NAME_LAYOUTS = new Set(['split', 'adventure', 'aftermath'])
+
+export function codCardName(card: ScryCard): string {
+  if (card.layout && FULL_NAME_LAYOUTS.has(card.layout)) return card.name
+  return card.name.split(' // ')[0]
+}
 
 export interface CodEntry {
   name: string
@@ -67,12 +74,15 @@ export function parseCod(xml: string): CodDeck {
 }
 
 export function generatedDeckToCod(deck: Deck): CodDeck {
-  const side = deck.cards
-    .filter((d) => d.category === 'Commander')
-    .map((d) => ({ name: d.card.name.split(' //')[0], qty: d.qty }))
+  const side = [
+    ...deck.cards
+      .filter((d) => d.category === 'Commander')
+      .map((d) => ({ name: codCardName(d.card), qty: d.qty })),
+    ...(deck.attractions ?? []).map((d) => ({ name: codCardName(d.card), qty: d.qty })),
+  ]
   const main = deck.cards
     .filter((d) => d.category !== 'Commander')
-    .map((d) => ({ name: d.card.name.split(' //')[0], qty: d.qty }))
+    .map((d) => ({ name: codCardName(d.card), qty: d.qty }))
   const lead = deck.commander.name.split(',')[0]
   const themes = deck.settings.themes.join(' ')
   return { name: themes ? `${lead} ${themes}` : lead, side, main }
@@ -144,7 +154,7 @@ export async function downloadCod(filename: string, xml: string) {
 }
 
 export function deckToText(deck: Deck): string {
-  const line = (d: Deck['cards'][number]) => `${d.qty} ${d.card.name.split(' //')[0]}`
+  const line = (d: Deck['cards'][number]) => `${d.qty} ${codCardName(d.card)}`
   const commanders = deck.cards.filter((d) => d.category === 'Commander')
   const main = deck.cards.filter((d) => d.category !== 'Commander')
   const out: string[] = []
@@ -155,6 +165,11 @@ export function deckToText(deck: Deck): string {
     out.push('Deck')
   }
   out.push(...main.map(line))
+  if (deck.attractions?.length) {
+    out.push('')
+    out.push('Attractions')
+    out.push(...deck.attractions.map(line))
+  }
   return out.join('\n') + '\n'
 }
 
@@ -163,7 +178,7 @@ export async function downloadText(filename: string, deck: Deck) {
 }
 
 export function codToText(cod: CodDeck): string {
-  const line = (c: CodEntry) => `${c.qty} ${c.name.split(' //')[0]}`
+  const line = (c: CodEntry) => `${c.qty} ${c.name}`
   const out: string[] = []
   if (cod.side.length) {
     out.push('Commander')
