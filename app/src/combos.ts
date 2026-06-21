@@ -43,13 +43,18 @@ export async function findCombos(
     const included: SpellbookVariant[] = results?.included ?? []
     const almost: SpellbookVariant[] = results?.almostIncluded ?? []
     const inDeck = new Set([deck.commander.name, ...deck.cards.map((d) => d.card.name)])
-    return {
-      included: included.slice(0, 12).map(mapVariant),
-      almost: almost.slice(0, 8).map((v) => {
+    const potential = almost
+      .map((v) => {
         const combo = mapVariant(v)
         combo.missing = combo.cards.filter((c) => !inDeck.has(c))
         return combo
-      }),
+      })
+      .filter((c) => c.missing && c.missing.length >= 1 && c.missing.length <= 2)
+      .sort((a, b) => (a.missing?.length ?? 0) - (b.missing?.length ?? 0))
+      .slice(0, 16)
+    return {
+      included: included.slice(0, 20).map(mapVariant),
+      almost: potential,
     }
   } catch {
     return { included: [], almost: [] }

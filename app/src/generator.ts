@@ -14,6 +14,7 @@ import { commanderSlug, fetchEdhrecPageBySlug, resolveCards, type EdhrecRec, typ
 import { themeQuery, TAG_QUERIES, detectTribe } from './themes'
 import { unionIdentity } from './partner'
 import { finalScore, rankInclusion, resolveWeights } from './scoring'
+import { estimateBracketFromCards } from './analysis'
 
 export type ProgressFn = (stepIndex: number, cards: DeckCard[]) => void
 
@@ -713,10 +714,11 @@ export function deckFromCards(
       : []),
     ...mainCards.filter((d) => d.category !== 'Commander'),
   ]
+  const estimatedBracket = estimateBracketFromCards(cards).bracket as 1 | 2 | 3 | 4 | 5
   const settings: BuildSettings = {
     commander,
     partner,
-    bracket: 3,
+    bracket: estimatedBracket,
     budget: 'any',
     themes: [],
     tags: [],
