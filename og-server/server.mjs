@@ -23,6 +23,19 @@ const GEN_RATE_LIMIT = 240 // generation pings per window per IP
 const RATE_WINDOW_MS = 60 * 60 * 1000
 const MAX_BODY = 32 * 1024
 
+// ---- Scryfall caching proxy ----
+const SCRY_UPSTREAM = process.env.SCRY_UPSTREAM ?? 'https://api.scryfall.com'
+const SCRY_PREFIX = '/scryfall-api'
+const SCRY_UA = 'GalaxyCommander/1.0 (+https://commander.thegalaxy.dev)'
+const SCRY_FRESH_MS = process.env.SCRY_FRESH_MS
+  ? Number(process.env.SCRY_FRESH_MS)
+  : 12 * 60 * 60 * 1000 // serve cache without hitting upstream for 12h
+const SCRY_TIMEOUT_MS = 9000
+const SCRY_THROTTLE_MS = 80 // min gap between upstream calls (Scryfall asks ~50-100ms)
+const SCRY_MAX_BODY = 2 * 1024 * 1024 // skip caching responses larger than 2MB
+const SCRY_MAX_ROWS = 20000
+const SCRY_CACHE_METHODS = new Set(['GET', 'POST'])
+
 const scryCache = new Map() // name -> { at, data }
 
 // ---------- datastore (SQLite) ----------
@@ -45,6 +58,14 @@ db.exec(`
     value INTEGER NOT NULL DEFAULT 0
   );
   INSERT OR IGNORE INTO counters (name, value) VALUES ('decks_generated', 0);
+  CREATE TABLE IF NOT EXISTS scryfall_cache (
+    key     TEXT PRIMARY KEY,
+    status  INTEGER NOT NULL,
+    ctype   TEXT NOT NULL,
+    body    BLOB NOT NULL,
+    fetched INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_scry_fetched ON scryfall_cache(fetched);
 `)
 
 const stmtByHash = db.prepare('SELECT id, expires FROM shares WHERE hash = ?')
@@ -71,6 +92,209 @@ function bumpGenerated(by = 1) {
 
 function generatedCount() {
   return stmtGetCounter.get('decks_generated')?.value ?? 0
+}
+
+// ---------- Scryfall cache statements + proxy ----------
+const stmtScryGet = db.prepare('SELECT status, ctype, body, fetched FROM scryfall_cache WHERE key = ?')
+const stmtScryPut = db.prepare(
+  'INSERT INTO scryfall_cache (key, status, ctype, body, fetched) VALUES (@key, @status, @ctype, @body, @fetched) ' +
+    'ON CONFLICT(key) DO UPDATE SET status=@status, ctype=@ctype, body=@body, fetched=@fetched',
+)
+const stmtScryCount = db.prepare('SELECT COUNT(*) AS n FROM scryfall_cache')
+const stmtScryEvict = db.prepare(
+  'DELETE FROM scryfall_cache WHERE key IN (SELECT key FROM scryfall_cache ORDER BY fetched ASC LIMIT ?)',
+)
+
+function scryCacheKey(method, pathQuery, bodyText) {
+  if (method === 'POST') {
+    const h = createHash('sha256').update(bodyText ?? '').digest('hex').slice(0, 24)
+    return `POST ${pathQuery} ${h}`
+  }
+  return `GET ${pathQuery}`
+}
+
+function scryGetCached(key) {
+  const row = stmtScryGet.get(key)
+  if (!row) return null
+  return { status: row.status, ctype: row.ctype, body: row.body, fetched: row.fetched }
+}
+
+function scryPutCached(key, status, ctype, body) {
+  if (body.length > SCRY_MAX_BODY) return
+  stmtScryPut.run({ key, status, ctype, body, fetched: Date.now() })
+  if (stmtScryCount.get().n > SCRY_MAX_ROWS) stmtScryEvict.run(Math.ceil(SCRY_MAX_ROWS * 0.1))
+}
+
+// ---------- MTGJSON offline fallback ----------
+// A locally-built card database (see build-mtgjson.mjs) used to synthesize
+// Scryfall-compatible responses for name lookups when Scryfall is unavailable.
+const MTGJSON_DB_PATH = path.join(DATA_DIR, 'mtgjson.db')
+let mtgDb = null
+let stmtMtgExact = null
+let stmtMtgLike = null
+function openMtgDb() {
+  if (mtgDb || !existsSync(MTGJSON_DB_PATH)) return
+  try {
+    mtgDb = new Database(MTGJSON_DB_PATH, { readonly: true, fileMustExist: true })
+    stmtMtgExact = mtgDb.prepare('SELECT data FROM cards WHERE name_lower = ?')
+    stmtMtgLike = mtgDb.prepare('SELECT data FROM cards WHERE name_lower LIKE ? ORDER BY length(name_lower) ASC LIMIT 1')
+  } catch {
+    mtgDb = null
+  }
+}
+openMtgDb()
+
+function mtgExact(name) {
+  if (!stmtMtgExact) return null
+  const row = stmtMtgExact.get(String(name).toLowerCase())
+  return row ? JSON.parse(row.data) : null
+}
+
+function mtgFuzzy(name) {
+  const exact = mtgExact(name)
+  if (exact) return exact
+  if (!stmtMtgLike) return null
+  const q = String(name).toLowerCase().replace(/[%_]/g, '')
+  for (const pat of [`${q}%`, `%${q}%`]) {
+    const row = stmtMtgLike.get(pat)
+    if (row) return JSON.parse(row.data)
+  }
+  return null
+}
+
+function jsonBody(obj) {
+  return Buffer.from(JSON.stringify(obj), 'utf8')
+}
+
+// Returns { status, ctype, body } synthesized from MTGJSON, or null if the
+// endpoint is not name-resolvable (e.g. search) or the db isn't available.
+function mtgjsonFallback(method, pathQuery, bodyText) {
+  openMtgDb()
+  if (!mtgDb) return null
+  const ctype = 'application/json; charset=utf-8'
+
+  if (method === 'POST' && pathQuery.startsWith('/cards/collection')) {
+    let ids = []
+    try {
+      ids = JSON.parse(bodyText ?? '{}')?.identifiers ?? []
+    } catch {
+      return null
+    }
+    const data = []
+    const not_found = []
+    for (const id of ids) {
+      const card = id?.name ? mtgExact(id.name) : null
+      if (card) data.push(card)
+      else not_found.push(id)
+    }
+    return { status: 200, ctype, body: jsonBody({ object: 'list', has_more: false, data, not_found }) }
+  }
+
+  if (method === 'GET' && pathQuery.startsWith('/cards/named')) {
+    const qs = new URLSearchParams(pathQuery.split('?')[1] ?? '')
+    const exact = qs.get('exact')
+    const fuzzy = qs.get('fuzzy')
+    const card = exact ? mtgExact(exact) : fuzzy ? mtgFuzzy(fuzzy) : null
+    if (card) return { status: 200, ctype, body: jsonBody(card) }
+    return {
+      status: 404,
+      ctype,
+      body: jsonBody({ object: 'error', code: 'not_found', details: 'Card not found (offline fallback).' }),
+    }
+  }
+
+  return null
+}
+
+// Serialize upstream calls with a small throttle to respect Scryfall's rate guidance.
+let scryChain = Promise.resolve()
+function scrySchedule(fn) {
+  const run = scryChain.then(async () => {
+    try {
+      return await fn()
+    } finally {
+      await new Promise((r) => setTimeout(r, SCRY_THROTTLE_MS))
+    }
+  })
+  scryChain = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
+}
+
+async function scryUpstream(method, pathQuery, bodyText) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), SCRY_TIMEOUT_MS)
+  try {
+    const res = await fetch(`${SCRY_UPSTREAM}${pathQuery}`, {
+      method,
+      signal: ctrl.signal,
+      headers: {
+        'User-Agent': SCRY_UA,
+        Accept: method === 'POST' ? 'application/json' : '*/*',
+        ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: method === 'POST' ? bodyText : undefined,
+    })
+    const buf = Buffer.from(await res.arrayBuffer())
+    return { status: res.status, ctype: res.headers.get('content-type') ?? 'application/json', body: buf }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function handleScryfall(req, res) {
+  const method = req.method ?? 'GET'
+  if (!SCRY_CACHE_METHODS.has(method)) return sendJson(res, 405, { error: 'Method not allowed.' })
+
+  const pathQuery = req.url.slice(SCRY_PREFIX.length) || '/'
+  let bodyText
+  if (method === 'POST') {
+    try {
+      bodyText = await readBody(req)
+    } catch {
+      return sendJson(res, 413, { error: 'Payload too large.' })
+    }
+  }
+
+  const key = scryCacheKey(method, pathQuery, bodyText)
+  const cached = scryGetCached(key)
+  const now = Date.now()
+
+  const respond = (status, ctype, body, cacheState) => {
+    res.writeHead(status, {
+      'Content-Type': ctype,
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+      'X-Proxy-Cache': cacheState,
+    })
+    res.end(body)
+  }
+
+  // fresh cache hit: skip upstream entirely
+  if (cached && now - cached.fetched < SCRY_FRESH_MS) {
+    return respond(cached.status, cached.ctype, cached.body, 'fresh')
+  }
+
+  try {
+    const up = await scrySchedule(() => scryUpstream(method, pathQuery, bodyText))
+    // cache successful + definitive-not-found responses
+    if (up.status === 200 || up.status === 404) scryPutCached(key, up.status, up.ctype, up.body)
+    // upstream is unhealthy (5xx/429): prefer stale cache, then MTGJSON fallback
+    if (up.status >= 500 || up.status === 429) {
+      if (cached) return respond(cached.status, cached.ctype, cached.body, 'stale')
+      const mj = mtgjsonFallback(method, pathQuery, bodyText)
+      if (mj) return respond(mj.status, mj.ctype, mj.body, 'mtgjson')
+    }
+    return respond(up.status, up.ctype, up.body, cached ? 'revalidated' : 'miss')
+  } catch {
+    // network error / timeout -> stale-if-error, then MTGJSON fallback
+    if (cached) return respond(cached.status, cached.ctype, cached.body, 'stale')
+    const mj = mtgjsonFallback(method, pathQuery, bodyText)
+    if (mj) return respond(mj.status, mj.ctype, mj.body, 'mtgjson')
+    return sendJson(res, 503, { error: 'Scryfall is unavailable and no cached copy exists yet.' })
+  }
 }
 
 function cleanupExpired() {
@@ -339,6 +563,10 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, ORIGIN)
     const { pathname } = url
+
+    if (pathname === SCRY_PREFIX || pathname.startsWith(`${SCRY_PREFIX}/`)) {
+      return await handleScryfall(req, res)
+    }
 
     if (pathname === '/api/share' && req.method === 'POST') return await handleCreate(req, res)
 

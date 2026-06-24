@@ -60,6 +60,12 @@ async function edhrecFetch(path: string): Promise<Response> {
   return fetch(`/edhrec-api${path}`)
 }
 
+// Browser routes the collection lookup through our caching proxy; the Tauri
+// desktop build talks to Scryfall directly.
+const SCRY_COLLECTION_URL = isTauri()
+  ? 'https://api.scryfall.com/cards/collection'
+  : '/scryfall-api/cards/collection'
+
 export async function fetchEdhrecPage(
   commanderName: string,
   themeSlug?: string
@@ -150,7 +156,7 @@ export async function resolveCards(names: string[]): Promise<Map<string, ScryCar
     for (let i = 0; i < list.length; i += 75) {
       const chunk = list.slice(i, i + 75)
       try {
-        const res = await fetch('https://api.scryfall.com/cards/collection', {
+        const res = await fetch(SCRY_COLLECTION_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ identifiers: chunk.map((name) => ({ name })) }),

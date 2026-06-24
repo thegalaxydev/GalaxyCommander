@@ -2,6 +2,14 @@ import type { ScryCard } from './types'
 
 const API = 'https://api.scryfall.com'
 
+// In the browser, route data requests through our caching proxy (/scryfall-api)
+// so repeat lookups are fast and we can serve last-known-good results when
+// Scryfall is having an outage. The Tauri desktop build hits Scryfall directly.
+function isTauri(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+const SCRY_BASE = isTauri() ? API : '/scryfall-api'
+
 let lastCall = 0
 async function throttledFetch(url: string): Promise<Response> {
   const wait = Math.max(0, lastCall + 90 - Date.now())
@@ -21,7 +29,7 @@ export async function searchCards(
     unique: 'cards',
   })
   if (opts.dir) params.set('dir', opts.dir)
-  let url = `${API}/cards/search?${params.toString()}`
+  let url = `${SCRY_BASE}/cards/search?${params.toString()}`
   const out: ScryCard[] = []
   while (url && out.length < max) {
     const res = await throttledFetch(url)
@@ -72,7 +80,7 @@ export async function fetchRandomCommander(colors: string[] = []): Promise<ScryC
       : ''
   const q = `is:commander ${idPart} ${legalOrUpcoming()}`.replace(/\s+/g, ' ').trim()
   try {
-    const res = await fetch(`${API}/cards/random?q=${encodeURIComponent(q)}`)
+    const res = await fetch(`${SCRY_BASE}/cards/random?q=${encodeURIComponent(q)}`)
     if (!res.ok) return null
     return (await res.json()) as ScryCard
   } catch {
@@ -83,7 +91,7 @@ export async function fetchRandomCommander(colors: string[] = []): Promise<ScryC
 export async function fetchNamedCard(name: string): Promise<ScryCard | null> {
   try {
     const res = await fetch(
-      `${API}/cards/named?exact=${encodeURIComponent(name)}`
+      `${SCRY_BASE}/cards/named?exact=${encodeURIComponent(name)}`
     )
     if (!res.ok) return null
     return (await res.json()) as ScryCard

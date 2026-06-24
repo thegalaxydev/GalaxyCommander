@@ -2891,6 +2891,160 @@ button {
   }
 }
 
+/* ------- Phones / small tablets: stack everything and let the page scroll ------- */
+@media (max-width: 768px) {
+  html,
+  body,
+  #root {
+    height: auto;
+    min-height: 100%;
+  }
+  body {
+    overflow-x: hidden;
+  }
+
+  .shell {
+    height: auto;
+    min-height: 100dvh;
+  }
+
+  /* top navigation wraps; tabs drop to their own full-width row */
+  .topnav {
+    flex-wrap: wrap;
+    gap: 10px 12px;
+    padding: 10px 12px 0;
+  }
+  .topnav .logo {
+    font-size: 16px;
+  }
+  .topnav-actions {
+    margin-left: auto;
+  }
+  .view-tabs {
+    order: 3;
+    width: 100%;
+  }
+  .view-tabs button {
+    flex: 1;
+    text-align: center;
+    padding: 9px 10px;
+  }
+
+  /* single-column stacked layout for both the generator and the deck builder */
+  .app,
+  .app.builder-view {
+    grid-template-columns: 1fr;
+    height: auto;
+    padding: 12px;
+    gap: 12px;
+  }
+
+  /* release the independent column scroll containers so content flows naturally */
+  .sidebar,
+  .center,
+  .builder-center,
+  .right,
+  .deck-result,
+  .deck-result-body,
+  .deck-tab-body,
+  .builder-lists {
+    overflow: visible;
+    min-height: 0;
+    max-height: none;
+    height: auto;
+  }
+  .right {
+    flex-direction: column;
+  }
+
+  .deck-view {
+    overflow: visible;
+    min-height: 70vh;
+  }
+
+  /* deck tabs scroll sideways instead of squeezing */
+  .deck-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .deck-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .deck-tabs button {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* single-column card lists and overview */
+  .decklist-cols {
+    columns: 1;
+  }
+  .overview-cols {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 16px;
+  }
+  .decklist {
+    padding: 16px;
+  }
+  .copy-btn {
+    position: static;
+    margin-bottom: 12px;
+  }
+
+  /* action bars wrap and align left on narrow screens */
+  .center-bar {
+    flex-wrap: wrap;
+  }
+  .center-bar-actions {
+    justify-content: flex-start;
+  }
+  .builder-toolbar {
+    flex-wrap: wrap;
+  }
+
+  /* touch: row controls are always visible (no hover) and easier to tap */
+  .row-buttons {
+    opacity: 1;
+  }
+  .row-buttons button {
+    width: 28px;
+    height: 28px;
+    font-size: 13px;
+  }
+
+  /* keep wide modals comfortably inside the viewport */
+  .modal {
+    max-height: 88dvh;
+  }
+
+  /* 16px text inputs prevent iOS Safari from auto-zooming on focus */
+  input[type='text'],
+  input[type='search'],
+  input:not([type]),
+  textarea,
+  select,
+  .deck-name-input {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 460px) {
+  .topnav .logo img {
+    width: 22px;
+    height: 22px;
+  }
+  .health-list,
+  .overview-cols {
+    grid-template-columns: 1fr;
+  }
+  .center-bar-actions {
+    width: 100%;
+  }
+}
+
 .sandbox {
   display: flex;
   flex-direction: column;
@@ -3287,6 +3441,77 @@ button {
 .discord-btn:hover {
   color: #5865f2;
   border-color: #5865f2;
+}
+
+.discord-modal {
+  position: relative;
+  max-width: 420px;
+  width: calc(100% - 32px);
+  text-align: center;
+  padding: 32px 28px 26px;
+}
+
+.discord-modal-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 16px;
+  border-radius: 18px;
+  color: #fff;
+  background: #5865f2;
+  box-shadow: 0 10px 30px rgba(88, 101, 242, 0.45);
+}
+
+.discord-modal h2 {
+  margin: 0 0 10px;
+  font-size: 22px;
+}
+
+.discord-modal p {
+  margin: 0 0 22px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.discord-modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.discord-join-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 42px;
+  font-weight: 600;
+  color: #fff;
+  background: #5865f2;
+  border: none;
+  border-radius: 10px;
+  transition: background 0.18s ease, transform 0.18s ease;
+}
+
+.discord-join-btn:hover {
+  background: #4752c4;
+  transform: translateY(-1px);
+}
+
+.discord-dismiss-btn {
+  height: 38px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: color 0.18s ease, border-color 0.18s ease;
+}
+
+.discord-dismiss-btn:hover {
+  color: var(--text);
+  border-color: var(--accent-a);
 }
 
 .version-badge {
