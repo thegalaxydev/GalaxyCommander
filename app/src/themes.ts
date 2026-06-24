@@ -41,6 +41,63 @@ export const TAG_QUERIES: Record<string, string> = {
   Control: '(o:"counter target" or o:"destroy all" or o:"return target")',
 }
 
+export const THEME_DESCRIPTIONS: Record<string, string> = {
+  Tokens: 'Flood the board with creature tokens, then leverage them for damage, sacrifice fuel, or go wide.',
+  Aristocrats: 'Sacrifice your own creatures for value, draining opponents with death triggers and recursion.',
+  Reanimator: 'Cheat big creatures from the graveyard into play for a fraction of their mana cost.',
+  Counters: 'Build up +1/+1 counters and proliferate them to grow an overwhelming board.',
+  '+1/+1 Counters': 'Build up +1/+1 counters and proliferate them to grow an overwhelming board.',
+  Spellslinger: 'Lean on instants and sorceries, with payoffs that trigger whenever you cast noncreature spells.',
+  Lifegain: 'Gain life repeatedly and convert that life total into card draw, damage, or board presence.',
+  Artifacts: 'Generate value from a dense artifact base — cost reduction, recursion, and artifact synergies.',
+  Enchantress: 'Cast enchantments to draw cards and snowball passive value engines.',
+  Enchantments: 'Cast enchantments to draw cards and snowball passive value engines.',
+  Landfall: 'Trigger powerful effects each time a land enters, often with extra land drops and ramp.',
+  Mill: "Grind opponents' libraries into the graveyard until they can't draw.",
+  Voltron: 'Suit up a single creature with equipment and auras to win through commander damage.',
+  Stax: 'Slow the game to a crawl with taxes and lock pieces while you operate above them.',
+  Combo: 'Assemble specific card combinations that generate an immediate or inevitable win.',
+  Sacrifice: 'Repeatedly sacrifice permanents for value and recursion loops.',
+  Blink: 'Flicker creatures in and out to abuse enter-the-battlefield triggers.',
+  Flicker: 'Flicker creatures in and out to abuse enter-the-battlefield triggers.',
+  Superfriends: 'Deploy and protect a wall of planeswalkers, ticking up to ultimate advantage.',
+  Planeswalkers: 'Deploy and protect a wall of planeswalkers, ticking up to ultimate advantage.',
+  'Group Hug': 'Give everyone resources to steer the game and profit from the extra cards and mana.',
+  Storm: 'Chain cheap spells in one turn to build a high storm count for an explosive payoff.',
+  Treasure: 'Generate Treasure tokens for explosive ramp and artifact synergies.',
+  Wheels: 'Force everyone to discard and redraw, refilling your hand while disrupting theirs.',
+  Ramp: 'Accelerate your mana to cast threats well ahead of the table.',
+  'Big Mana': 'Generate huge amounts of mana to power out expensive, game-ending spells.',
+  Lands: 'Treat lands as the engine — recursion, extra drops, and lands-matter payoffs.',
+  Graveyard: 'Use the graveyard as a resource, recurring and reanimating key cards.',
+  Discard: "Strip opponents' hands and punish them for having few cards.",
+  Theft: "Steal opponents' creatures and spells and turn them against the table.",
+  Equipment: 'Lean on equipment to repeatedly buff and protect your creatures.',
+  Auras: 'Enchant creatures with auras for efficient, snowballing threats.',
+  Poison: 'Win through toxic and infect, dealing poison counters instead of damage.',
+  Infect: 'Win through toxic and infect, dealing poison counters instead of damage.',
+  Devotion: 'Pack colored pips to fuel devotion payoffs and big mana.',
+  Vehicles: 'Crew powerful Vehicles for evasive, removal-resistant threats.',
+  Politics: 'Bargain, threaten, and incentivize opponents to shape the game in your favor.',
+  Pillowfort: 'Discourage attacks with deterrents and defenses while you build to a win.',
+  Burn: 'Point direct damage at opponents to race them down.',
+  Control: 'Counter and remove threats, win late once the board is locked up.',
+  Aggro: 'Apply early pressure with cheap, aggressive creatures.',
+}
+
+export function describeTheme(theme: string, count?: number): string {
+  const desc =
+    THEME_DESCRIPTIONS[theme] ??
+    (TRIBES.some((t) => t.toLowerCase() === theme.trim().toLowerCase())
+      ? `A ${theme} typal deck — cards that care about ${theme}s and reward going wide on the tribe.`
+      : `Pulls cards that support a ${theme} strategy.`)
+  const popularity =
+    typeof count === 'number' && count > 0
+      ? ` Played in ${count.toLocaleString()} EDHREC decks for this commander.`
+      : ''
+  return desc + popularity
+}
+
 export function themeQuery(theme: string): string {
   if (THEME_QUERIES[theme]) return THEME_QUERIES[theme]
   const words = theme.trim().toLowerCase()

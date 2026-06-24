@@ -1,13 +1,14 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Category, DeckCard, ScryCard } from '../types'
 import { CATEGORY_ORDER } from '../types'
 import { categorize, deckFromCards } from '../generator'
 import { cardImage, cardPrice } from '../scryfall'
-import { deckHealth, estimateBracket } from '../analysis'
+import { deckHealth, estimateBracketFromCards } from '../analysis'
 import { resolveCards } from '../edhrec'
 import {
   deckToCod,
   parseCod,
+  parseText,
   downloadCod,
   downloadCodText,
   loadSavedDecks,
@@ -18,6 +19,9 @@ import {
   type CodEntry,
   type SavedDeck,
 } from '../cod'
+import { detectDeckUrl, importDeckFromUrl } from '../deckImport'
+import { fetchPreconList, fetchPrecon, type PreconSummary } from '../mtgjson'
+import { buildShareUrl, createPermalink } from '../share'
 import { CardPicker } from './CardPicker'
 import { StatsPanel } from './StatsPanel'
 import { ManaCost } from './ManaCost'
@@ -37,9 +41,11 @@ interface Hover {
 
 interface Props {
   onAnalyze: (commander: ScryCard, partner: ScryCard | null, cards: DeckCard[], name: string) => void
+  onImprove: (commander: ScryCard, partner: ScryCard | null, cards: ScryCard[]) => void
+  initialDeck?: CodDeck | null
 }
 
-export function DeckBuilder({ onAnalyze }: Props) {
+export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
   const [saved, setSaved] = useState<SavedDeck[]>(loadSavedDecks)
   const [deckId, setDeckId] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -48,7 +54,18 @@ export function DeckBuilder({ onAnalyze }: Props) {
   const [busy, setBusy] = useState(false)
   const [savedFlash, setSavedFlash] = useState(false)
   const [hover, setHover] = useState<Hover | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importError, setImportError] = useState<string | null>(null)
+  const [preconOpen, setPreconOpen] = useState(false)
+  const [precons, setPrecons] = useState<PreconSummary[]>([])
+  const [preconQuery, setPreconQuery] = useState('')
+  const [preconError, setPreconError] = useState<string | null>(null)
+  const [shared, setShared] = useState(false)
+  const [permaBusy, setPermaBusy] = useState(false)
+  const [permaFlash, setPermaFlash] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const loadedShared = useRef(false)
 
   const showHover = (card: ScryCard | null, e: React.MouseEvent) => {
     const src = card ? cardImage(card, 'normal') : ''
@@ -79,7 +96,7 @@ export function DeckBuilder({ onAnalyze }: Props) {
   const commanderCard = side.find((e) => e.card)?.card ?? null
   const partnerCard = side.filter((e) => e.card)[1]?.card ?? null
 
-  const playtest = () => {
+  const analyze = () => {
     if (!commanderCard) {
       window.alert(
         'Set a commander first — use the ★ button on a card to move it into the Commander zone.'
@@ -90,10 +107,24 @@ export function DeckBuilder({ onAnalyze }: Props) {
       .filter((e) => e.card)
       .map((e) => ({ card: e.card!, category: categorize(e.card!), qty: e.qty, reason: '' }))
     if (cards.length === 0) {
-      window.alert('Add some cards to the deck before playtesting.')
+      window.alert('Add some cards to the deck before analyzing.')
       return
     }
     onAnalyze(commanderCard, partnerCard, cards, name.trim() || 'Untitled Deck')
+  }
+
+  const improve = () => {
+    if (!commanderCard) {
+      window.alert(
+        'Set a commander first — use the ★ button on a card to move it into the Commander zone.'
+      )
+      return
+    }
+    const isBasic = (n: string) => /^(Plains|Island|Swamp|Mountain|Forest|Wastes)$/.test(n)
+    const cards = main
+      .filter((e) => e.card && !isBasic(e.card.name))
+      .map((e) => e.card!)
+    onImprove(commanderCard, partnerCard, cards)
   }
 
   const exportDeck = async (deckName: string, xml: string) => {
@@ -121,14 +152,68 @@ export function DeckBuilder({ onAnalyze }: Props) {
       const lookup = new Map<string, ScryCard>()
       for (const card of resolved.values()) {
         lookup.set(card.name.toLowerCase(), card)
-        lookup.set(card.name.split(' //')[0].toLowerCase(), card)
+        lookup.set(card.name.split(' // ')[0].toLowerCase(), card)
+        for (const face of card.card_faces ?? []) {
+          if (face?.name) lookup.set(face.name.toLowerCase(), card)
+        }
       }
-      const mk = (e: CodEntry): Entry => ({ ...e, card: lookup.get(e.name.toLowerCase()) ?? null })
+      const mk = (e: CodEntry): Entry => {
+        const key = e.name.toLowerCase()
+        const card =
+          resolved.get(e.name) ??
+          resolved.get(key) ??
+          lookup.get(key) ??
+          lookup.get(e.name.split(' // ')[0].toLowerCase()) ??
+          null
+        return { ...e, card }
+      }
       setName(cod.name)
       setSide(cod.side.map(mk))
       setMain(cod.main.map(mk))
     } finally {
       setBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (loadedShared.current || !initialDeck) return
+    loadedShared.current = true
+    setDeckId(null)
+    void loadCodDeck(initialDeck)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialDeck])
+
+  const shareCurrent = async () => {
+    const url = buildShareUrl(toCodDeck())
+    if (url.length > 8000) {
+      window.alert('This deck is too large to share as a link. Export it as .txt or .cod instead.')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(url)
+      setShared(true)
+      setTimeout(() => setShared(false), 1500)
+    } catch {
+      window.prompt('Copy this shareable link:', url)
+    }
+  }
+
+  const permalinkCurrent = async () => {
+    if (permaBusy) return
+    setPermaBusy(true)
+    try {
+      const url = await createPermalink(toCodDeck())
+      try {
+        await navigator.clipboard.writeText(url)
+        setPermaFlash(true)
+        setTimeout(() => setPermaFlash(false), 1500)
+      } catch {
+        window.prompt('Copy this permanent link:', url)
+      }
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Could not create a permanent link.')
+    } finally {
+      setPermaBusy(false)
     }
   }
 
@@ -148,10 +233,63 @@ export function DeckBuilder({ onAnalyze }: Props) {
   }
 
   const importFile = async (file: File) => {
-    const cod = parseCod(await file.text())
+    const text = await file.text()
+    const isCod = /\.(cod|xml)$/i.test(file.name) || /^\s*<\?xml|<cockatrice_deck/i.test(text)
+    const cod = isCod ? parseCod(text) : parseText(text)
     setDeckId(null)
-    if (!cod.name) cod.name = file.name.replace(/\.cod$/i, '')
+    if (!cod.name || cod.name === 'Imported Deck') cod.name = file.name.replace(/\.[^.]+$/i, '')
     await loadCodDeck(cod)
+  }
+
+  const importFromText = async () => {
+    const value = importText.trim()
+    if (!value) return
+    setImportError(null)
+    setBusy(true)
+    try {
+      const cod = detectDeckUrl(value) ? await importDeckFromUrl(value) : parseText(value)
+      if (!cod.main.length && !cod.side.length) {
+        throw new Error('Could not find any cards to import.')
+      }
+      setDeckId(null)
+      await loadCodDeck(cod)
+      setImportText('')
+      setImportOpen(false)
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : 'Import failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const togglePrecons = async () => {
+    setPreconError(null)
+    const next = !preconOpen
+    setPreconOpen(next)
+    if (next && precons.length === 0) {
+      try {
+        setPrecons(await fetchPreconList())
+      } catch (err) {
+        setPreconError(err instanceof Error ? err.message : 'Could not load precons.')
+      }
+    }
+  }
+
+  const loadPrecon = async (p: PreconSummary) => {
+    setPreconError(null)
+    setBusy(true)
+    try {
+      const cod = await fetchPrecon(p.fileName)
+      if (!cod.main.length) throw new Error('That precon had no cards to load.')
+      setDeckId(null)
+      await loadCodDeck(cod)
+      setPreconOpen(false)
+      setPreconQuery('')
+    } catch (err) {
+      setPreconError(err instanceof Error ? err.message : 'Could not load that precon.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   const addCard = (card: ScryCard) => {
@@ -209,12 +347,24 @@ export function DeckBuilder({ onAnalyze }: Props) {
             + New Deck
           </button>
           <button className="theme-row add" onClick={() => fileRef.current?.click()}>
-            ⬆ Import .cod
+            ⬆ Import file (.cod / .txt)
+          </button>
+          <button
+            className="theme-row add"
+            onClick={() => {
+              setImportError(null)
+              setImportOpen((v) => !v)
+            }}
+          >
+            🔗 Import from URL / text
+          </button>
+          <button className="theme-row add" onClick={togglePrecons}>
+            🃏 Load an official precon
           </button>
           <input
             ref={fileRef}
             type="file"
-            accept=".cod,.xml"
+            accept=".cod,.xml,.txt,.dec"
             hidden
             onChange={(e) => {
               const file = e.target.files?.[0]
@@ -222,6 +372,57 @@ export function DeckBuilder({ onAnalyze }: Props) {
               e.target.value = ''
             }}
           />
+          {importOpen && (
+            <div className="import-box">
+              <textarea
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+                placeholder={'Paste a Moxfield or Archidekt deck link,\nor a full decklist (1 Sol Ring ...).'}
+                rows={5}
+              />
+              {importError && <p className="import-error">{importError}</p>}
+              <button
+                className="theme-row add"
+                disabled={busy || !importText.trim()}
+                onClick={importFromText}
+              >
+                {busy ? 'Importing…' : 'Import'}
+              </button>
+            </div>
+          )}
+          {preconOpen && (
+            <div className="import-box precon-box">
+              <input
+                className="deck-name-input"
+                value={preconQuery}
+                onChange={(e) => setPreconQuery(e.target.value)}
+                placeholder="Search precons (e.g. Sliver, Vampire, 2024)..."
+              />
+              {preconError && <p className="import-error">{preconError}</p>}
+              {!preconError && precons.length === 0 && <p className="hint">Loading precons…</p>}
+              <div className="precon-list">
+                {precons
+                  .filter((p) => {
+                    const q = preconQuery.trim().toLowerCase()
+                    return !q || p.name.toLowerCase().includes(q) || p.releaseDate.includes(q)
+                  })
+                  .slice(0, 80)
+                  .map((p) => (
+                    <button
+                      key={p.fileName}
+                      className="precon-row"
+                      disabled={busy}
+                      onClick={() => void loadPrecon(p)}
+                    >
+                      <strong>{p.name}</strong>
+                      <small>
+                        {p.code} · {p.releaseDate}
+                      </small>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
         </div>
         <div className="saved-list">
           {saved.length === 0 && <p className="hint">No saved decks yet. Build one here or save a generated deck.</p>}
@@ -271,10 +472,20 @@ export function DeckBuilder({ onAnalyze }: Props) {
           <button
             type="button"
             className="new-build"
-            onClick={playtest}
+            onClick={analyze}
             disabled={total === 0}
+            title="Open the full analysis view (overview, decklist, combos, playtest, upgrades)"
           >
-            ▶ Playtest
+            📊 Analyze
+          </button>
+          <button
+            type="button"
+            className="new-build"
+            onClick={improve}
+            disabled={total === 0}
+            title="Open the generator with this commander and your cards pinned — tune bracket/budget/themes, unpin any cards you want swapped, then Generate"
+          >
+            ✨ Improve
           </button>
           <button
             type="button"
@@ -291,6 +502,24 @@ export function DeckBuilder({ onAnalyze }: Props) {
             disabled={total === 0}
           >
             ⬇ Export .txt
+          </button>
+          <button
+            type="button"
+            className="new-build"
+            onClick={() => void shareCurrent()}
+            disabled={total === 0}
+            title="Copy a shareable link that reconstructs this deck — no account or upload needed"
+          >
+            {shared ? '✓ Link copied' : '🔗 Share link'}
+          </button>
+          <button
+            type="button"
+            className="new-build"
+            onClick={() => void permalinkCurrent()}
+            disabled={total === 0 || permaBusy}
+            title="Save a short permanent link (e.g. /d/abc123). Stored for 90 days, refreshed whenever it's opened"
+          >
+            {permaFlash ? '✓ Permalink copied' : permaBusy ? 'Saving…' : '♾ Permalink'}
           </button>
         </div>
 
@@ -370,6 +599,7 @@ export function DeckBuilder({ onAnalyze }: Props) {
 
       <aside className="right">
         <StatsPanel cards={statsCards} />
+        {main.some((e) => e.card) && <BuilderBracket cards={statsCards} />}
         {commanderCard && main.some((e) => e.card) && (
           <BuilderHealth commander={commanderCard} partner={partnerCard} cards={statsCards} />
         )}
@@ -378,6 +608,20 @@ export function DeckBuilder({ onAnalyze }: Props) {
       {hover && (
         <img className="card-preview" src={hover.src} style={{ top: hover.y }} alt="" />
       )}
+    </div>
+  )
+}
+
+function BuilderBracket({ cards }: { cards: DeckCard[] }) {
+  const est = useMemo(() => estimateBracketFromCards(cards), [cards])
+  return (
+    <div className="deck-health builder-health">
+      <div className="perceived-bracket compact">
+        <span className={`pb-badge b${est.bracket}`}>
+          Likely Bracket {est.bracket} · {est.label}
+        </span>
+        <span className="pb-reasons">{est.reasons.join(' · ')}</span>
+      </div>
     </div>
   )
 }
@@ -397,15 +641,8 @@ function BuilderHealth({
   )
   const health = deckHealth(deck)
   const warnings = health.filter((h) => h.level === 'warn')
-  const bracketEst = estimateBracket(deck)
   return (
     <div className="deck-health builder-health">
-      <div className="perceived-bracket compact">
-        <span className={`pb-badge b${bracketEst.bracket}`}>
-          Perceived Bracket {bracketEst.bracket} · {bracketEst.label}
-        </span>
-        <span className="pb-reasons">{bracketEst.reasons.join(' · ')}</span>
-      </div>
       <h3>
         Deck Health{' '}
         <span className={`health-badge ${warnings.length ? 'warn' : 'ok'}`}>

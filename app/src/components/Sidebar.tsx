@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { AdvancedOptions, BudgetTier, DeckPersonality, PowerProfile, ScryCard } from '../types'
 import { META_OPTIONS } from '../types'
-import { SUGGESTED_THEMES, TAGS } from '../themes'
+import { SUGGESTED_THEMES, TAGS, describeTheme } from '../themes'
 import type { EdhrecTheme } from '../edhrec'
 import { CommanderSearch } from './CommanderSearch'
 import { CardPicker } from './CardPicker'
@@ -82,10 +82,10 @@ function colorComboName(colors: string[]): string {
 }
 
 const BUDGET_LABELS: { value: BudgetTier; label: string }[] = [
-  { value: 'any', label: 'Any' },
   { value: 'low', label: '$' },
   { value: 'mid', label: '$$' },
   { value: 'high', label: '$$$' },
+  { value: 'any', label: 'Any' },
 ]
 
 const OPTION_LABELS: { key: keyof AdvancedOptions; label: string }[] = [
@@ -136,6 +136,17 @@ export function Sidebar(props: Props) {
   }
   const mode = props.commander ? partnerMode(props.commander) : null
   const identity = props.commander ? unionIdentity(props.commander, props.partner) : undefined
+  const [themeTip, setThemeTip] = useState<{ text: string; x: number; y: number } | null>(null)
+
+  const showThemeTip = (theme: string, e: React.MouseEvent) => {
+    const count = props.edhrecThemes.find((t) => t.name === theme)?.count
+    const rect = e.currentTarget.getBoundingClientRect()
+    setThemeTip({
+      text: describeTheme(theme, count),
+      x: rect.right + 10,
+      y: Math.min(rect.top, window.innerHeight - 130),
+    })
+  }
 
   const toggleMeta = (m: string) => {
     props.onMeta(
@@ -323,6 +334,9 @@ export function Sidebar(props: Props) {
               key={theme}
               className={`theme-row ${props.themes.includes(theme) ? 'active' : ''}`}
               onClick={() => toggleTheme(theme)}
+              onMouseEnter={(e) => showThemeTip(theme, e)}
+              onMouseMove={(e) => showThemeTip(theme, e)}
+              onMouseLeave={() => setThemeTip(null)}
             >
               {theme}
               {props.edhrecThemes.find((t) => t.name === theme) && (
@@ -498,6 +512,11 @@ export function Sidebar(props: Props) {
           </div>
         )}
       </section>
+      {themeTip && (
+        <div className="theme-tip" style={{ left: themeTip.x, top: themeTip.y }}>
+          {themeTip.text}
+        </div>
+      )}
     </aside>
   )
 }

@@ -177,6 +177,50 @@ export async function downloadText(filename: string, deck: Deck) {
   await saveTextFile(filename, deckToText(deck), 'txt', 'Decklist', 'text/plain;charset=utf-8')
 }
 
+function cleanImportedName(raw: string): string {
+  let n = raw.trim()
+  n = n.replace(/^SB:\s*/i, '')
+  n = n.replace(/\s*\[[^\]]*\]\s*$/g, '')
+  n = n.replace(/\s*\^[^^]*\^\s*$/g, '')
+  n = n.replace(/\s*\*[^*]*\*\s*$/g, '')
+  n = n.replace(/\s*#\S+\s*$/g, '')
+  n = n.replace(/\s*\([A-Za-z0-9]{2,6}\)\s*[A-Za-z0-9★\u2605-]*\s*$/g, '')
+  n = n.replace(/\s*<[^>]*>\s*$/g, '')
+  return n.trim()
+}
+
+const SIDE_SECTION = /^(commanders?|companions?)\b/i
+const SKIP_SECTION = /^(sideboard|side\s?board|maybe\s?board|maybe|considering|tokens?|stickers?|about|planes?|schemes?|attractions?)\b/i
+const MAIN_SECTION = /^(deck|mainboard|main\s?board|main|library|cards)\b/i
+const CATEGORY_HEADER = /^[A-Za-z][A-Za-z '/&-]*\s*\(\d+\)\s*$/
+
+export function parseText(text: string): CodDeck {
+  const lines = text.split(/\r?\n/)
+  const side: CodEntry[] = []
+  const main: CodEntry[] = []
+  let zone: 'side' | 'main' | 'skip' = 'main'
+  const push = (z: 'side' | 'main' | 'skip', name: string, qty: number) => {
+    if (z === 'skip' || !name) return
+    ;(z === 'side' ? side : main).push({ name, qty })
+  }
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line || line.startsWith('//') || line.startsWith('#')) continue
+    const qtyMatch = line.match(/^(\d+)\s*[xX]?\s+(.+)$/)
+    if (qtyMatch) {
+      const qty = parseInt(qtyMatch[1], 10) || 1
+      const name = cleanImportedName(qtyMatch[2])
+      push(zone, name, qty)
+      continue
+    }
+    if (SIDE_SECTION.test(line)) zone = 'side'
+    else if (SKIP_SECTION.test(line)) zone = 'skip'
+    else if (MAIN_SECTION.test(line)) zone = 'main'
+    else if (CATEGORY_HEADER.test(line)) zone = 'main'
+  }
+  return { name: 'Imported Deck', side, main }
+}
+
 export function codToText(cod: CodDeck): string {
   const line = (c: CodEntry) => `${c.qty} ${c.name}`
   const out: string[] = []

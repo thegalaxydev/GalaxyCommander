@@ -1,4 +1,4 @@
-import type { Category, ComboInfo, Deck, DeckCard } from './types'
+import type { Category, ComboInfo, Deck, DeckCard, ScryCard } from './types'
 import { cardPrice, cardOracle } from './scryfall'
 import { unionIdentity } from './partner'
 
@@ -47,9 +47,70 @@ function recommendedSources(pips: number): number {
   return Math.max(9, Math.min(17, Math.round(pips * 0.45) + 7))
 }
 
-function isGameEnding(combo: ComboInfo): boolean {
+export function isGameEndingCombo(combo: ComboInfo): boolean {
   const text = `${combo.produces.join(' ')} ${combo.description}`.toLowerCase()
   return /infinite|win the game|each opponent loses|wins? the game/.test(text)
+}
+
+export function comboChainsExtraTurns(combo: ComboInfo): boolean {
+  const produced = combo.produces.join(' ').toLowerCase()
+  if (/\b(infinite|extra|additional)\s+turns?\b/.test(produced)) return true
+  return /infinite turns?/.test(`${produced} ${combo.description}`.toLowerCase())
+}
+
+// Earliest turn a combo can realistically come together. Pieces are deployed
+// across separate turns (≈1 land/turn), so the binding factor is the cumulative
+// deployment schedule and the mana needed to execute — NOT the raw sum of costs.
+// A two-piece combo costing 4 + 4 can be online by ~turn 5, even though it totals 8.
+export function comboEarliestTurn(combo: ComboInfo, cards: DeckCard[]): number {
+  const remaining = combo.cards
+    .map((name) => cards.find((d) => d.card.name === name)?.card.cmc ?? 0)
+    .sort((a, b) => a - b)
+  let turn = 0
+  while (remaining.length && turn < 30) {
+    turn++
+    let budget = turn
+    for (let i = 0; i < remaining.length; ) {
+      if (remaining[i] <= budget) {
+        budget -= remaining[i]
+        remaining.splice(i, 1)
+      } else i++
+    }
+  }
+  return Math.max(turn, combo.executeMana ?? 0)
+}
+
+// Commander Spellbook tags each combo with the lowest bracket it suits.
+const TAG_MIN_BRACKET: Record<string, number> = { R: 4, S: 3, P: 3, O: 2, C: 2, E: 1, B: 5 }
+
+export const BRACKET_TAG_INFO: Record<string, { name: string; bracket: number }> = {
+  R: { name: 'Ruthless', bracket: 4 },
+  S: { name: 'Spicy', bracket: 3 },
+  P: { name: 'Powerful', bracket: 3 },
+  O: { name: 'Oddball', bracket: 2 },
+  C: { name: 'Core', bracket: 2 },
+  E: { name: 'Exhibition', bracket: 1 },
+  B: { name: 'Banned', bracket: 5 },
+}
+
+export function comboTagInfo(
+  combo: ComboInfo
+): { code: string; name: string; bracket: number } | null {
+  const code = (combo.bracketTag ?? '').toUpperCase()
+  const info = BRACKET_TAG_INFO[code]
+  return info ? { code, ...info } : null
+}
+
+// Lowest Commander bracket a combo is appropriate for. Prefers Spellbook's own
+// bracketTag; falls back to a deployment-speed estimate when no tag is present.
+export function comboMinBracket(combo: ComboInfo, cards: DeckCard[]): number {
+  if (comboChainsExtraTurns(combo)) return 4
+  const tag = (combo.bracketTag ?? '').toUpperCase()
+  if (Object.prototype.hasOwnProperty.call(TAG_MIN_BRACKET, tag)) return TAG_MIN_BRACKET[tag]
+  if (combo.cards.length <= 2 && isGameEndingCombo(combo)) {
+    return comboEarliestTurn(combo, cards) <= 5 ? 4 : 3
+  }
+  return 1
 }
 
 const BRACKET_LABELS: Record<number, string> = {
@@ -74,8 +135,33 @@ const MLD_NAMES = new Set(
     'Static Orb',
     'Stasis',
     'Back to Basics',
+    'Sunder',
+    'Wildfire',
+    'Burning of Xinye',
+    'Boom // Bust',
+    'Bust',
+    'Bend or Break',
+    'Tectonic Break',
+    'Devastating Dreams',
+    'Epicenter',
+    'Fall of the Thran',
+    'Mana Vortex',
+    'Keldon Firebombers',
+    'Death Cloud',
+    'Magus of the Moon',
+    'Blood Moon',
+    'Contamination',
+    'Smokestack',
+    'Tanglewire',
+    'Root Maze',
   ].map((n) => n.toLowerCase())
 )
+
+export function isMassLandDenial(card: ScryCard): boolean {
+  if (MLD_NAMES.has(card.name.split(' //')[0].toLowerCase())) return true
+  const text = cardOracle(card)
+  return /destroy all lands|destroy all nonbasic lands|each player sacrifices?[^.]*lands/i.test(text)
+}
 
 export interface BracketEstimate {
   bracket: number
@@ -91,13 +177,7 @@ export function estimateBracketFromCards(
   const sum = (list: DeckCard[]) => list.reduce((n, d) => n + d.qty, 0)
 
   const gameChangers = sum(cards.filter((d) => d.card.game_changer))
-  const massLandDenial = sum(
-    nonCommander.filter(
-      (d) =>
-        MLD_NAMES.has(d.card.name.split(' //')[0].toLowerCase()) ||
-        /destroy all lands|each player sacrifices?[^.]*lands/i.test(cardOracle(d.card))
-    )
-  )
+  const massLandDenial = sum(nonCommander.filter((d) => isMassLandDenial(d.card)))
   const extraTurns = sum(
     nonCommander.filter((d) => /take an extra turn/i.test(cardOracle(d.card)))
   )
@@ -107,26 +187,35 @@ export function estimateBracketFromCards(
       return /search your library for (a|an|up to)/i.test(o) && !/basic land/i.test(o)
     })
   )
-  const twoCardCombos = (combos?.included ?? []).filter(
-    (c) => c.cards.length <= 2 && isGameEnding(c)
-  ).length
+  const allCombos = combos?.included ?? []
+  const twoCardList = allCombos.filter((c) => c.cards.length <= 2 && isGameEndingCombo(c))
+  const twoCardCombos = twoCardList.length
+  const comboFloor = allCombos.reduce((m, c) => Math.max(m, comboMinBracket(c, cards)), 1)
+  const fastCombos = allCombos.filter((c) => comboMinBracket(c, cards) >= 4).length
+  const lateCombos = allCombos.filter((c) => comboMinBracket(c, cards) === 3).length
+  const extraTurnCombos = allCombos.filter(comboChainsExtraTurns).length
 
   const reasons: string[] = []
   if (gameChangers) reasons.push(`${gameChangers} Game Changer${gameChangers > 1 ? 's' : ''}`)
-  if (twoCardCombos) reasons.push(`${twoCardCombos} two-card win combo${twoCardCombos > 1 ? 's' : ''}`)
+  if (twoCardCombos)
+    reasons.push(
+      `${twoCardCombos} two-card win combo${twoCardCombos > 1 ? 's' : ''}` +
+        (fastCombos ? ' (fast / Bracket 4+)' : lateCombos ? ' (late-game)' : '')
+    )
+  if (extraTurnCombos) reasons.push(`${extraTurnCombos} extra-turn combo${extraTurnCombos > 1 ? 's' : ''}`)
   if (massLandDenial) reasons.push(`${massLandDenial} mass land denial piece${massLandDenial > 1 ? 's' : ''}`)
   if (extraTurns) reasons.push(`${extraTurns} extra-turn spell${extraTurns > 1 ? 's' : ''}`)
   if (tutors) reasons.push(`${tutors} tutor${tutors > 1 ? 's' : ''}`)
 
   let bracket: number
-  if (gameChangers >= 8 && twoCardCombos >= 2) {
+  if (gameChangers >= 8 && fastCombos >= 2) {
     bracket = 5
-  } else if (gameChangers > 3 || massLandDenial > 0 || twoCardCombos > 0 || extraTurns >= 2) {
+  } else if (gameChangers > 3 || massLandDenial > 0 || comboFloor >= 4 || extraTurns >= 2) {
     bracket = 4
-  } else if (gameChangers >= 1 || tutors >= 3 || extraTurns >= 1) {
+  } else if (gameChangers >= 1 || tutors >= 3 || extraTurns >= 1 || comboFloor >= 3) {
     bracket = 3
   } else {
-    bracket = 2
+    bracket = Math.max(2, comboFloor)
   }
 
   if (!reasons.length) reasons.push('No Game Changers, mass land denial, or compact combos detected')
@@ -276,12 +365,14 @@ export function deckHealth(
   }
 
   if (combos && deck.settings.bracket <= 3) {
-    const earlyCombos = combos.included.filter((c) => c.cards.length <= 2 && isGameEnding(c))
-    if (earlyCombos.length > 0) {
+    const overBracket = combos.included.filter(
+      (c) => comboMinBracket(c, cards) > deck.settings.bracket
+    )
+    if (overBracket.length > 0) {
       items.push({
         level: 'warn',
-        message: `Two-card win combo${earlyCombos.length > 1 ? 's' : ''} in a Bracket ${deck.settings.bracket} deck (${earlyCombos.length})`,
-        detail: `Brackets 1–3 are not meant to run compact two-card infinite/win combos (e.g. ${earlyCombos[0].cards.join(' + ')}). Cut a piece or move to Bracket 4+ to stay within the bracket's expectations.`,
+        message: `Combo${overBracket.length > 1 ? 's' : ''} above Bracket ${deck.settings.bracket} (${overBracket.length})`,
+        detail: `These combos are rated for a higher bracket (e.g. ${overBracket[0].cards.join(' + ')}) — fast two-card infinites, extra-turn chains, or mass land denial don't belong in Brackets 1–3. Cut a piece or raise the bracket.`,
       })
     }
   }

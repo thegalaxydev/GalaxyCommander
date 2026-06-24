@@ -18,6 +18,21 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/edhrec-api/, ''),
       },
+      '/spellbook-api': {
+        target: 'https://backend.commanderspellbook.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/spellbook-api/, ''),
+      },
+      '/archidekt-api': {
+        target: 'https://archidekt.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/archidekt-api/, ''),
+      },
+      '/moxfield-api': {
+        target: 'https://api2.moxfield.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/moxfield-api/, ''),
+      },
     },
   },
 })

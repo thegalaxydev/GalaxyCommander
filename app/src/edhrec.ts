@@ -137,21 +137,49 @@ export async function fetchEdhrecPairStats(
 
 export async function resolveCards(names: string[]): Promise<Map<string, ScryCard>> {
   const out = new Map<string, ScryCard>()
-  for (let i = 0; i < names.length; i += 75) {
-    const chunk = names.slice(i, i + 75)
-    try {
-      const res = await fetch('https://api.scryfall.com/cards/collection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifiers: chunk.map((name) => ({ name })) }),
-      })
-      if (!res.ok) continue
-      const data = await res.json()
-      for (const card of data.data ?? []) {
-        out.set(card.name, card)
+  const index = (card: ScryCard) => {
+    const keys = new Set<string>([card.name, card.name.split(' // ')[0]])
+    for (const face of card.card_faces ?? []) if (face?.name) keys.add(face.name)
+    for (const key of keys) {
+      out.set(key, card)
+      out.set(key.toLowerCase(), card)
+    }
+  }
+  const requestChunked = async (list: string[]): Promise<string[]> => {
+    const notFound: string[] = []
+    for (let i = 0; i < list.length; i += 75) {
+      const chunk = list.slice(i, i + 75)
+      try {
+        const res = await fetch('https://api.scryfall.com/cards/collection', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifiers: chunk.map((name) => ({ name })) }),
+        })
+        if (!res.ok) {
+          notFound.push(...chunk)
+          continue
+        }
+        const data = await res.json()
+        for (const card of data.data ?? []) index(card)
+        for (const nf of data.not_found ?? []) if (nf?.name) notFound.push(nf.name)
+      } catch {
+        notFound.push(...chunk)
       }
-    } catch {
-      continue
+    }
+    return notFound
+  }
+
+  const notFound = await requestChunked(names)
+  const retry = [...new Set(notFound.filter((n) => n.includes(' // ')).map((n) => n.split(' // ')[0]))].filter(
+    (n) => !out.has(n)
+  )
+  if (retry.length) await requestChunked(retry)
+  for (const original of notFound) {
+    if (!original.includes(' // ') || out.has(original)) continue
+    const card = out.get(original.split(' // ')[0])
+    if (card) {
+      out.set(original, card)
+      out.set(original.toLowerCase(), card)
     }
   }
   return out

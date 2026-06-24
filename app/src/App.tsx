@@ -35,7 +35,8 @@ import { ChatPanel } from './components/ChatPanel'
 import { DeckBuilder } from './components/DeckBuilder'
 import { GenProgress } from './components/GenProgress'
 import { SettingsModal } from './components/SettingsModal'
-import { generatedDeckToCod, deckToCod, downloadCod, downloadText, upsertSavedDeck } from './cod'
+import { generatedDeckToCod, deckToCod, downloadCod, downloadText, upsertSavedDeck, type CodDeck } from './cod'
+import { buildShareUrl, clearShareParam, createPermalink, readSharedDeckFromUrl, shareLinkExpired } from './share'
 import { applyPreset } from './personality'
 
 function initialGeneratorState(settings: AppSettings) {
@@ -56,7 +57,18 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const init = initialGeneratorState(appSettings)
 
-  const [view, setView] = useState<'generate' | 'builder'>('generate')
+  const [sharedDeck] = useState<CodDeck | null>(() => readSharedDeckFromUrl())
+  const [view, setView] = useState<'generate' | 'builder'>(sharedDeck ? 'builder' : 'generate')
+
+  useEffect(() => {
+    if (sharedDeck) clearShareParam()
+    else if (shareLinkExpired()) {
+      window.setTimeout(
+        () => window.alert('That shared deck link has expired or no longer exists.'),
+        0
+      )
+    }
+  }, [sharedDeck])
   const [codSaved, setCodSaved] = useState(false)
   const [commander, setCommander] = useState<ScryCard | null>(null)
   const [partner, setPartner] = useState<ScryCard | null>(null)
@@ -77,6 +89,10 @@ export default function App() {
   const [liveCards, setLiveCards] = useState<DeckCard[]>([])
   const [deck, setDeck] = useState<Deck | null>(null)
 
+  const [copied, setCopied] = useState(false)
+  const [shared, setShared] = useState(false)
+  const [permaBusy, setPermaBusy] = useState(false)
+  const [permaFlash, setPermaFlash] = useState(false)
   const [combos, setCombos] = useState<{ included: ComboInfo[]; almost: ComboInfo[] } | null>(null)
   const [combosLoading, setCombosLoading] = useState(false)
   const [upgrades, setUpgrades] = useState<UpgradeTier[]>([])
@@ -192,6 +208,7 @@ export default function App() {
         setDeck(result)
         deckRef.current = result
         setLiveCards(result.cards)
+        void fetch('/api/generated', { method: 'POST' }).catch(() => {})
         setCombosLoading(true)
         findCombos(result).then((c) => {
           setCombos(c)
@@ -283,6 +300,34 @@ export default function App() {
     computeTieredUpgrades(built).then(setUpgrades)
   }
 
+  const improveBuiltDeck = async (
+    commanderCard: ScryCard,
+    partnerCard: ScryCard | null,
+    cards: ScryCard[]
+  ) => {
+    setDeck(null)
+    deckRef.current = null
+    setSteps([])
+    setGenerating(false)
+    setCommander(commanderCard)
+    setPartner(partnerCard)
+    setThemes([])
+    setEdhrecThemes([])
+    setMustInclude(cards)
+    setView('generate')
+    let page = null
+    if (partnerCard) {
+      const a = commanderSlug(commanderCard.name)
+      const b = commanderSlug(partnerCard.name)
+      for (const pairSlug of [`${a}-${b}`, `${b}-${a}`]) {
+        page = await fetchEdhrecPageBySlug(pairSlug)
+        if (page?.themes.length) break
+      }
+    }
+    if (!page?.themes.length) page = await fetchEdhrecPage(commanderCard.name)
+    if (page?.themes.length) setEdhrecThemes(page.themes)
+  }
+
   const sendChat = async (text: string) => {
     const current = deckRef.current
     if (!current) return
@@ -371,6 +416,55 @@ export default function App() {
     }
   }
 
+  const shareDeck = async () => {
+    if (!deck) return
+    const url = buildShareUrl(generatedDeckToCod(deck))
+    if (url.length > 8000) {
+      window.alert(
+        'This deck is too large to share as a link. Export it as .txt or .cod instead.'
+      )
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(url)
+      setShared(true)
+      window.setTimeout(() => setShared(false), 1500)
+    } catch {
+      window.prompt('Copy this shareable link:', url)
+    }
+  }
+
+  const permalinkDeck = async () => {
+    if (!deck || permaBusy) return
+    setPermaBusy(true)
+    try {
+      const url = await createPermalink(generatedDeckToCod(deck))
+      try {
+        await navigator.clipboard.writeText(url)
+        setPermaFlash(true)
+        window.setTimeout(() => setPermaFlash(false), 1500)
+      } catch {
+        window.prompt('Copy this permanent link:', url)
+      }
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Could not create a permanent link.')
+    } finally {
+      setPermaBusy(false)
+    }
+  }
+
+  const copyList = async () => {
+    if (!deck) return
+    const text = deck.cards.map((d) => `${d.qty} ${d.card.name}`).join('\n')
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    } catch {
+      window.alert('Could not access the clipboard.')
+    }
+  }
+
   const saveToBuilder = () => {
     if (!deck) return
     const cod = generatedDeckToCod(deck)
@@ -398,6 +492,21 @@ export default function App() {
           </button>
         </nav>
         <div className="topnav-actions">
+          <a
+            className="github-btn discord-btn"
+            href="https://discord.gg/5nmag9c95s"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Join the Discord"
+            aria-label="Join the Discord"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M20.317 4.369a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.444.864-.608 1.249a18.27 18.27 0 0 0-5.487 0 12.6 12.6 0 0 0-.617-1.25.077.077 0 0 0-.079-.036A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.891.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.331c-1.182 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"
+              />
+            </svg>
+          </a>
           <a
             className="github-btn"
             href="https://github.com/thegalaxydev/GalaxyCommander"
@@ -427,7 +536,7 @@ export default function App() {
         commanderIdentity={commander ? unionIdentity(commander, partner) : null}
       />
       {view === 'builder' ? (
-        <DeckBuilder onAnalyze={analyzeBuiltDeck} />
+        <DeckBuilder onAnalyze={analyzeBuiltDeck} onImprove={improveBuiltDeck} initialDeck={sharedDeck} />
       ) : (
     <div className="app">
       <Sidebar
@@ -507,6 +616,32 @@ export default function App() {
                 <button
                   type="button"
                   className="new-build"
+                  onClick={() => void copyList()}
+                  disabled={generating}
+                >
+                  {copied ? '✓ Copied' : '⧉ Copy to Clipboard'}
+                </button>
+                <button
+                  type="button"
+                  className="new-build"
+                  onClick={() => void shareDeck()}
+                  disabled={generating}
+                  title="Copy a shareable link that reconstructs this deck — no account or upload needed"
+                >
+                  {shared ? '✓ Link copied' : '🔗 Share link'}
+                </button>
+                <button
+                  type="button"
+                  className="new-build"
+                  onClick={() => void permalinkDeck()}
+                  disabled={generating || permaBusy}
+                  title="Save a short permanent link (e.g. /d/abc123). Stored for 90 days, refreshed whenever it's opened"
+                >
+                  {permaFlash ? '✓ Permalink copied' : permaBusy ? 'Saving…' : '♾ Permalink'}
+                </button>
+                <button
+                  type="button"
+                  className="new-build"
                   onClick={saveToBuilder}
                   disabled={generating || codSaved}
                 >
@@ -529,6 +664,7 @@ export default function App() {
                 generating={generating}
                 simIterations={appSettings.simIterations}
                 disableCardPreviews={appSettings.disableCardPreviews}
+                settings={appSettings}
               />
             </div>
           </div>

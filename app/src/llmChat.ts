@@ -39,23 +39,20 @@ function anthropicUrl(settings: AppSettings): string {
   return 'https://api.anthropic.com/v1/messages'
 }
 
-export async function askLlm(
-  deck: Deck,
-  history: { role: 'user' | 'assistant'; text: string }[],
-  message: string,
-  settings: AppSettings
+interface LlmMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+async function callLlm(
+  messages: LlmMessage[],
+  settings: AppSettings,
+  maxTokens = 600,
+  temperature = 0.6
 ): Promise<string> {
   if (!settings.llmEnabled || !settings.llmApiKey.trim()) {
     throw new Error('LLM not configured')
   }
-
-  const system = `You are a helpful Magic: The Gathering Commander deck advisor. Answer concisely about the specific deck provided. Reference actual cards from the list when relevant. Do not invent cards not in the deck unless suggesting swaps.`
-
-  const messages = [
-    { role: 'system', content: `${system}\n\n--- DECK ---\n${deckContext(deck)}` },
-    ...history.slice(-8).map((m) => ({ role: m.role, content: m.text })),
-    { role: 'user', content: message },
-  ]
 
   if (settings.llmProvider === 'anthropic') {
     const res = await fetch(anthropicUrl(settings), {
@@ -64,10 +61,12 @@ export async function askLlm(
         'Content-Type': 'application/json',
         'x-api-key': settings.llmApiKey.trim(),
         'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify({
         model: settings.llmModel,
-        max_tokens: 600,
+        max_tokens: maxTokens,
+        temperature,
         system: messages.find((m) => m.role === 'system')?.content,
         messages: messages
           .filter((m) => m.role !== 'system')
@@ -97,8 +96,8 @@ export async function askLlm(
     body: JSON.stringify({
       model: settings.llmModel,
       messages,
-      max_tokens: 600,
-      temperature: 0.6,
+      max_tokens: maxTokens,
+      temperature,
     }),
   })
   if (!res.ok) {
@@ -107,6 +106,81 @@ export async function askLlm(
   }
   const data = await res.json()
   return data.choices?.[0]?.message?.content?.trim() ?? 'No response.'
+}
+
+export async function askLlm(
+  deck: Deck,
+  history: { role: 'user' | 'assistant'; text: string }[],
+  message: string,
+  settings: AppSettings
+): Promise<string> {
+  const system = `You are a helpful Magic: The Gathering Commander deck advisor. Answer concisely about the specific deck provided. Reference actual cards from the list when relevant. Do not invent cards not in the deck unless suggesting swaps.`
+
+  const messages: LlmMessage[] = [
+    { role: 'system', content: `${system}\n\n--- DECK ---\n${deckContext(deck)}` },
+    ...history.slice(-8).map((m) => ({ role: m.role, content: m.text })),
+    { role: 'user', content: message },
+  ]
+  return callLlm(messages, settings, 600)
+}
+
+export async function generateOverview(deck: Deck, settings: AppSettings): Promise<string> {
+  const system = `You are a Magic: The Gathering Commander deck expert writing a concise strategic overview for the exact deck provided. Write 2–3 short paragraphs (no headings, no bullet points) describing the deck's core game plan, key synergies, and how it wins. Reference specific cards from the list. Do not invent cards that are not in the deck. Plain prose only.`
+  return callLlm(
+    [
+      { role: 'system', content: `${system}\n\n--- DECK ---\n${deckContext(deck)}` },
+      { role: 'user', content: 'Write the strategic overview for this deck.' },
+    ],
+    settings,
+    500
+  )
+}
+
+export interface PlayGuideSections {
+  early: string
+  mid: string
+  late: string
+  threats: string
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  const cleaned = text.replace(/```json\s*/gi, '').replace(/```/g, '').trim()
+  const start = cleaned.indexOf('{')
+  const end = cleaned.lastIndexOf('}')
+  if (start === -1 || end === -1 || end < start) return null
+  try {
+    return JSON.parse(cleaned.slice(start, end + 1))
+  } catch {
+    return null
+  }
+}
+
+export async function generatePlayGuide(
+  deck: Deck,
+  settings: AppSettings
+): Promise<PlayGuideSections> {
+  const system = `You are a Magic: The Gathering Commander deck coach writing a piloting guide for the exact deck provided. Reference specific cards from the list and do not invent cards that are not in it. Respond with ONLY a JSON object (no markdown, no commentary) with exactly these string keys: "early" (Turns 1–3 plan and ideal openers/mulligan advice), "mid" (Turns 4–6 sequencing around the commander), "late" (Turn 7+ how to close the game and which finishers to use), and "threats" (what to interact with and how to deploy removal/board wipes). Each value is 1–2 sentences of plain prose.`
+  const raw = await callLlm(
+    [
+      { role: 'system', content: `${system}\n\n--- DECK ---\n${deckContext(deck)}` },
+      { role: 'user', content: 'Write the play guide JSON for this deck.' },
+    ],
+    settings,
+    700
+  )
+  const obj = parseJsonObject(raw)
+  if (!obj) throw new Error('Could not parse play guide response')
+  const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+  const sections: PlayGuideSections = {
+    early: str(obj.early),
+    mid: str(obj.mid),
+    late: str(obj.late),
+    threats: str(obj.threats),
+  }
+  if (!sections.early && !sections.mid && !sections.late && !sections.threats) {
+    throw new Error('Empty play guide response')
+  }
+  return sections
 }
 
 export function llmConfigured(settings: AppSettings): boolean {

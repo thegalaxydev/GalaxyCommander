@@ -1,0 +1,15 @@
+{
+  "name": "galaxy-commander-og",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Server-side Open Graph tag injection for shared deck links.",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "lz-string": "^1.5.0"
+  }
+}

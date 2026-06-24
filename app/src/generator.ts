@@ -14,7 +14,8 @@ import { commanderSlug, fetchEdhrecPageBySlug, resolveCards, type EdhrecRec, typ
 import { themeQuery, TAG_QUERIES, detectTribe } from './themes'
 import { unionIdentity } from './partner'
 import { finalScore, rankInclusion, resolveWeights } from './scoring'
-import { estimateBracketFromCards } from './analysis'
+import { estimateBracketFromCards, isMassLandDenial, comboMinBracket } from './analysis'
+import { findCombos } from './combos'
 
 export type ProgressFn = (stepIndex: number, cards: DeckCard[]) => void
 
@@ -475,6 +476,7 @@ export async function generateDeck(
     if (cardPrice(card) > cap) return
     if (avoidTutorsEffective && isTutor(card)) return
     if (avoidCombosEffective && settings.bracket <= 3 && isComboPiece(card)) return
+    if (settings.bracket <= 3 && isMassLandDenial(card)) return
     const category = cat ?? categorize(card)
     let adjScore = score
     if (landsMatter && category === 'Ramp') {
@@ -688,16 +690,124 @@ export async function generateDeck(
     (d, i) => deck.findIndex((x) => x.card.name === d.card.name) === i || /^(Plains|Island|Swamp|Mountain|Forest|Wastes)$/.test(d.card.name)
   )
 
-  const power = estimatePower(settings, finalDeck)
+  let resultDeck = finalDeck
+  if (settings.bracket <= 3) {
+    resultDeck = await pruneTwoCardCombos(finalDeck, {
+      commander,
+      partner,
+      settings,
+      pool,
+      used,
+      identity,
+      colorless,
+      neverSet,
+      cap,
+      base,
+      noSpoilers,
+    })
+  }
+
+  const power = estimatePower(settings, resultDeck)
   const wantsAttractions = usesAttractions(commander) || (!!partner && usesAttractions(partner))
   const attractions = wantsAttractions ? await buildAttractions() : undefined
   return {
     commander,
-    cards: finalDeck,
+    cards: resultDeck,
     settings,
     power,
     description: describeDeck(settings, power),
     ...(attractions && attractions.length ? { attractions } : {}),
+  }
+}
+
+interface PruneCtx {
+  commander: ScryCard
+  partner: ScryCard | null
+  settings: BuildSettings
+  pool: Map<Category, Candidate[]>
+  used: Set<string>
+  identity: string[]
+  colorless: boolean
+  neverSet: Set<string>
+  cap: number
+  base: string
+  noSpoilers: boolean
+}
+
+async function pruneTwoCardCombos(finalDeck: DeckCard[], ctx: PruneCtx): Promise<DeckCard[]> {
+  const { commander, partner, settings, pool, used, identity, colorless, neverSet, cap, base, noSpoilers } = ctx
+  try {
+    const probe: Deck = { commander, cards: finalDeck, settings, power: 0, description: '' }
+    const found = await findCombos(probe)
+    const disallowed = found.included.filter(
+      (combo) => settings.bracket < comboMinBracket(combo, finalDeck)
+    )
+    if (!disallowed.length) return finalDeck
+
+    const protectedNames = new Set<string>([
+      commander.name,
+      ...(partner ? [partner.name] : []),
+      ...(settings.mustInclude ?? []).map((c) => c.name),
+    ])
+    const remove = new Set<string>()
+    for (const combo of disallowed) {
+      if (combo.cards.some((n) => remove.has(n))) continue
+      const removable = combo.cards.filter((n) => !protectedNames.has(n))
+      if (!removable.length) continue
+      const pick =
+        removable.find((n) => {
+          const entry = finalDeck.find((d) => d.card.name === n)
+          return entry && entry.category !== 'Lands'
+        }) ?? removable[0]
+      remove.add(pick)
+    }
+    if (!remove.size) return finalDeck
+
+    const kept = finalDeck.filter((d) => !remove.has(d.card.name))
+    const need = finalDeck.length - kept.length
+    const comboNames = new Set(disallowed.flatMap((c) => c.cards))
+    const deckNames = new Set(kept.map((d) => d.card.name))
+    const replacements: DeckCard[] = []
+    const reason = `Swapped in for a combo piece rated above Bracket ${settings.bracket} (fast two-card infinite, extra-turn chain, or similar).`
+
+    const cats: Category[] = ['Synergy', 'Card Draw', 'Ramp', 'Removal', 'Finishers']
+    for (const cat of cats) {
+      if (replacements.length >= need) break
+      const list = (pool.get(cat) ?? []).sort((a, b) => b.score - a.score)
+      for (const cand of list) {
+        if (replacements.length >= need) break
+        const nm = cand.card.name
+        if (used.has(nm) || deckNames.has(nm) || comboNames.has(nm)) continue
+        if (isComboPiece(cand.card)) continue
+        used.add(nm)
+        deckNames.add(nm)
+        replacements.push({ card: cand.card, category: cat, qty: 1, reason })
+      }
+    }
+
+    if (replacements.length < need) {
+      const filler = await searchCards(`${base} -t:land usd<=${cap === Infinity ? 1000 : cap}`, {
+        max: (need - replacements.length) * 5,
+      })
+      for (const card of filler) {
+        if (replacements.length >= need) break
+        const nm = card.name
+        if (used.has(nm) || deckNames.has(nm) || comboNames.has(nm)) continue
+        if (!isLegal(card, noSpoilers) || !fitsIdentity(card, identity)) continue
+        if (card.game_changer || cardPrice(card) > cap) continue
+        if (colorless && deadInColorless(card)) continue
+        if (neverSet.has(nm.toLowerCase())) continue
+        if (isComboPiece(card)) continue
+        used.add(nm)
+        deckNames.add(nm)
+        const cat = categorize(card)
+        replacements.push({ card, category: cat === 'Lands' ? 'Synergy' : cat, qty: 1, reason })
+      }
+    }
+
+    return [...kept, ...replacements]
+  } catch {
+    return finalDeck
   }
 }
 

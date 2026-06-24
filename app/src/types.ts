@@ -133,6 +133,8 @@ export interface ComboInfo {
   produces: string[]
   description: string
   missing?: string[]
+  bracketTag?: string
+  executeMana?: number
 }
 
 export interface ChatMessage {

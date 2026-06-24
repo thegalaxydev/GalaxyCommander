@@ -12,6 +12,8 @@ interface SpellbookVariant {
   uses?: SpellbookCardUse[]
   produces?: SpellbookFeature[]
   description?: string
+  bracketTag?: string
+  manaValueNeeded?: number
 }
 
 function mapVariant(v: SpellbookVariant): ComboInfo {
@@ -19,6 +21,8 @@ function mapVariant(v: SpellbookVariant): ComboInfo {
     cards: (v.uses ?? []).map((u) => u.card?.name ?? '').filter(Boolean),
     produces: (v.produces ?? []).map((p) => p.feature?.name ?? '').filter(Boolean),
     description: v.description ?? '',
+    bracketTag: v.bracketTag,
+    executeMana: typeof v.manaValueNeeded === 'number' ? v.manaValueNeeded : undefined,
   }
 }
 
@@ -32,7 +36,7 @@ export async function findCombos(
     .filter((d) => d.category === 'Commander')
     .map((d) => ({ card: d.card.name, quantity: 1 }))
   try {
-    const res = await fetch('https://backend.commanderspellbook.com/find-my-combos', {
+    const res = await fetch('/spellbook-api/find-my-combos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ main, commanders }),
