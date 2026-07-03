@@ -99,7 +99,7 @@ export function CommanderSearch({ commander, onSelect, baseFilter, placeholder, 
             <div className="search-section">Popular right now</div>
           )}
           {(query.trim().length < 2 ? defaults : results)
-            .filter((card) => !excludeName || card.name !== excludeName)
+            .filter((card) => (!excludeName || card.name !== excludeName) && card.type_line)
             .map((card) => (
             <div
               key={card.id}
@@ -112,8 +112,8 @@ export function CommanderSearch({ commander, onSelect, baseFilter, placeholder, 
             >
               <img src={cardImage(card, 'art_crop')} alt="" />
               <div>
-                <span>{card.name.split(' //')[0]}</span>
-                <small>{card.type_line.split(' //')[0]}</small>
+                <span>{(card.name ?? '').split(' //')[0]}</span>
+                <small>{(card.type_line ?? '').split(' //')[0]}</small>
               </div>
               <ColorPips identity={card.color_identity} />
             </div>

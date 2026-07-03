@@ -2706,6 +2706,28 @@ button {
   font-size: 13px;
 }
 
+.budget-cap-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.budget-cap-field {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.budget-cap-field input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.budget-cap-field span {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
 .settings-actions {
   display: flex;
   flex-wrap: wrap;

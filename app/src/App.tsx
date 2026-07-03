@@ -250,6 +250,7 @@ export default function App() {
       partner,
       bracket,
       budget,
+      budgetCaps: appSettings.budgetCaps,
       themes,
       themeSlugs,
       tags,
@@ -563,6 +564,7 @@ export default function App() {
         onBracket={setBracket}
         budget={budget}
         onBudget={setBudget}
+        budgetCaps={appSettings.budgetCaps}
         themes={themes}
         onThemes={setThemes}
         edhrecThemes={edhrecThemes}

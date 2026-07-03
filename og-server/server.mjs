@@ -272,6 +272,17 @@ async function handleScryfall(req, res) {
     res.end(body)
   }
 
+  // /cards/random must never be cached — caching it returns the same "random"
+  // card on every call. Always proxy fresh upstream and skip the cache layer.
+  if (pathQuery.startsWith('/cards/random')) {
+    try {
+      const up = await scrySchedule(() => scryUpstream(method, pathQuery, bodyText))
+      return respond(up.status, up.ctype, up.body, 'bypass')
+    } catch {
+      return sendJson(res, 503, { error: 'Scryfall is unavailable.' })
+    }
+  }
+
   // fresh cache hit: skip upstream entirely
   if (cached && now - cached.fetched < SCRY_FRESH_MS) {
     return respond(cached.status, cached.ctype, cached.body, 'fresh')

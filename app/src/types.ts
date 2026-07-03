@@ -65,6 +65,14 @@ export interface DeckCard {
 
 export type BudgetTier = 'any' | 'low' | 'mid' | 'high'
 
+export interface BudgetCaps {
+  low: number
+  mid: number
+  high: number
+}
+
+export const DEFAULT_BUDGET_CAPS: BudgetCaps = { low: 5, mid: 20, high: 50 }
+
 export type DeckPersonality = 'custom' | 'value' | 'combo' | 'control' | 'aggro' | 'synergy'
 
 export interface AdvancedOptions {
@@ -75,6 +83,7 @@ export interface AdvancedOptions {
   latestSets: boolean
   noSpoilers: boolean
   allowUnsetCards: boolean
+  snowBasics: boolean
 }
 
 export interface PowerProfile {
@@ -108,6 +117,7 @@ export interface BuildSettings {
   partner?: ScryCard | null
   bracket: 1 | 2 | 3 | 4 | 5
   budget: BudgetTier
+  budgetCaps?: BudgetCaps
   themes: string[]
   themeSlugs?: string[]
   tags: string[]

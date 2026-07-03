@@ -1,4 +1,6 @@
 import type {
+  BudgetCaps,
+  BudgetTier,
   BuildSettings,
   Category,
   Deck,
@@ -8,7 +10,7 @@ import type {
   UpgradeTier,
   UpgradeSwap,
 } from './types'
-import { DEFAULT_PROFILE } from './types'
+import { DEFAULT_BUDGET_CAPS, DEFAULT_PROFILE } from './types'
 import { searchCards, cardOracle, cardPrice, cardManaCost, legalOrUpcoming } from './scryfall'
 import { commanderSlug, fetchEdhrecPageBySlug, resolveCards, type EdhrecRec, type EdhrecPage } from './edhrec'
 import { themeQuery, TAG_QUERIES, detectTribe } from './themes'
@@ -27,7 +29,12 @@ export const GEN_STEPS = [
   'Checking Legality...',
 ]
 
-const BUDGET_CAP: Record<string, number> = { any: Infinity, low: 5, mid: 20, high: 50 }
+function budgetCap(tier: BudgetTier, caps?: BudgetCaps): number {
+  if (tier === 'any') return Infinity
+  const resolved = caps ?? DEFAULT_BUDGET_CAPS
+  const value = resolved[tier]
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_BUDGET_CAPS[tier]
+}
 
 interface Candidate {
   card: ScryCard
@@ -73,6 +80,46 @@ function offColorFetchLand(card: ScryCard, identity: string[]): boolean {
   if (named.length === 0) return false
   const id = new Set(identity)
   return !named.some((t) => id.has(BASIC_TYPE_COLOR[t]))
+}
+
+// The ten original dual lands (ABUR duals): untapped, two basic land types,
+// no drawback, and fetchable — but they have low EDHREC inclusion because of
+// their price, so they must be pulled in explicitly at unconstrained budget.
+const ORIGINAL_DUAL_LANDS: { name: string; colors: [string, string] }[] = [
+  { name: 'Tundra', colors: ['W', 'U'] },
+  { name: 'Underground Sea', colors: ['U', 'B'] },
+  { name: 'Badlands', colors: ['B', 'R'] },
+  { name: 'Taiga', colors: ['R', 'G'] },
+  { name: 'Savannah', colors: ['G', 'W'] },
+  { name: 'Scrubland', colors: ['W', 'B'] },
+  { name: 'Volcanic Island', colors: ['U', 'R'] },
+  { name: 'Bayou', colors: ['B', 'G'] },
+  { name: 'Plateau', colors: ['R', 'W'] },
+  { name: 'Tropical Island', colors: ['G', 'U'] },
+]
+
+// Rewards good fixing lands (multicolor producers + true fetches) so they win
+// utility-land slots over ubiquitous-but-mediocre fixing (Command Tower aside).
+// At unconstrained budget, price is used as a positive quality signal because
+// premium fixing (fetches, shocks, original duals) is exactly what costs more.
+function landFixingScore(card: ScryCard, identity: string[], cap: number): number {
+  const type = (card.type_line ?? '').split('//')[0]
+  if (!/\bLand\b/.test(type) || /\bBasic\b/.test(type)) return 0
+  const text = cardOracle(card)
+  const idSet = new Set(identity)
+  const colorsProduced = new Set((card.produced_mana ?? []).filter((c) => idSet.has(c))).size
+  const isFetch =
+    /search your library for/i.test(text) &&
+    /(plains|island|swamp|mountain|forest|\bland card\b)/i.test(text)
+  let bonus = 0
+  if (colorsProduced >= 2) bonus += 1.0 + (colorsProduced - 2) * 0.5
+  if (isFetch) bonus += 1.5
+  // At "Any" budget, premium fixing is overlooked purely because it costs more;
+  // turn price into a quality signal (capped) for fixing lands only.
+  if (!Number.isFinite(cap) && (isFetch || colorsProduced >= 2)) {
+    bonus += Math.min(2, Math.log10(cardPrice(card) + 1))
+  }
+  return bonus
 }
 
 function usesAttractions(card: ScryCard): boolean {
@@ -354,7 +401,7 @@ export async function generateDeck(
   const identity = unionIdentity(commander, partner)
   const colorless = identity.length === 0
   const commanderNames = partner ? [commander.name, partner.name] : [commander.name]
-  const cap = BUDGET_CAP[settings.budget]
+  const cap = budgetCap(settings.budget, settings.budgetCaps)
   const profile = settings.powerProfile ?? DEFAULT_PROFILE
   const avoidCombosEffective = settings.options.avoidCombos || profile.combo <= 30
   const avoidTutorsEffective = settings.options.avoidTutors || profile.tutors <= 30
@@ -483,6 +530,7 @@ export async function generateDeck(
       if (isLandRamp(card)) adjScore += 2.5
       else if (isManaRock(card)) adjScore -= 2
     }
+    if (category === 'Lands') adjScore += landFixingScore(card, identity, cap)
     const list = pool.get(category) ?? []
     if (list.some((c) => c.card.name === card.name)) return
     list.push({ card, score: adjScore, reason })
@@ -552,6 +600,38 @@ export async function generateDeck(
   onProgress(1, deck)
 
   await fillFromScryfall('Lands', '-t:basic t:land', 'A strong land for this color identity.', 30)
+
+  // At unconstrained budget, explicitly add the original dual lands for these
+  // colors. They have no drawback but low EDHREC inclusion (price), so they'd
+  // never make the search-driven pool on their own.
+  if (!Number.isFinite(cap)) {
+    const idSet = new Set(identity)
+    const wanted = ORIGINAL_DUAL_LANDS.filter((d) => d.colors.every((c) => idSet.has(c))).map(
+      (d) => d.name
+    )
+    if (wanted.length) {
+      const dualCards = await resolveCards(wanted)
+      const reason = 'A premium original dual land — untapped, no-drawback fixing.'
+      for (const name of wanted) {
+        const card = dualCards.get(name)
+        if (!card) continue
+        // Guaranteed top-tier via a flat dominating score: these are the best
+        // fixing in the game and there are at most three per identity. EDHREC
+        // rank / price / produced_mana are often stripped by data fallbacks, so
+        // scoring signals can't be trusted. Bump the existing candidate if the
+        // recs already surfaced it (addCandidate dedups by name).
+        const list = pool.get('Lands') ?? []
+        const existing = list.find((c) => c.card.name === card.name)
+        if (existing) {
+          existing.score = 50
+          existing.reason = reason
+        } else {
+          addCandidate(card, 50, reason, 'Lands')
+        }
+      }
+    }
+  }
+
   const take = (cat: Category, count: number): DeckCard[] => {
     const list = (pool.get(cat) ?? []).sort((a, b) => b.score - a.score)
     const out: DeckCard[] = []
@@ -683,11 +763,11 @@ export async function generateDeck(
 
   const landCount = deck.filter((d) => d.category === 'Lands').reduce((n, d) => n + d.qty, 0)
   const basicsNeeded = Math.max(0, targets.lands - landCount)
-  const basics = await buildBasics(identity, deck, basicsNeeded)
+  const basics = await buildBasics(identity, deck, basicsNeeded, settings.options.snowBasics)
   deck.push(...basics)
 
   const finalDeck = deck.filter(
-    (d, i) => deck.findIndex((x) => x.card.name === d.card.name) === i || /^(Plains|Island|Swamp|Mountain|Forest|Wastes)$/.test(d.card.name)
+    (d, i) => deck.findIndex((x) => x.card.name === d.card.name) === i || /^(Snow-Covered )?(Plains|Island|Swamp|Mountain|Forest|Wastes)$/.test(d.card.name)
   )
 
   let resultDeck = finalDeck
@@ -840,6 +920,7 @@ export function deckFromCards(
       latestSets: true,
       noSpoilers: false,
       allowUnsetCards: false,
+      snowBasics: false,
     },
     powerProfile: DEFAULT_PROFILE,
     meta: [],
@@ -862,7 +943,7 @@ const CATEGORY_QUERIES: Partial<Record<Category, string>> = {
   Synergy: '-t:land',
 }
 
-const BASIC_NAMES = /^(Plains|Island|Swamp|Mountain|Forest|Wastes)$/
+const BASIC_NAMES = /^(Snow-Covered )?(Plains|Island|Swamp|Mountain|Forest|Wastes)$/
 
 function deckIdentityQuery(deck: Deck): string {
   return identityQuery(
@@ -989,7 +1070,7 @@ export async function computeTieredUpgrades(deck: Deck): Promise<UpgradeTier[]> 
 }
 
 export async function computeUpgrades(deck: Deck): Promise<{ card: ScryCard; note: string }[]> {
-  const cap = BUDGET_CAP[deck.settings.budget]
+  const cap = budgetCap(deck.settings.budget, deck.settings.budgetCaps)
   const used = new Set(deck.cards.map((d) => d.card.name))
   const colorless = unionIdentity(deck.commander, deck.settings.partner).length === 0
   const base = deckIdentityQuery(deck)
@@ -1022,11 +1103,14 @@ const BASIC_FOR_COLOR: Record<string, string> = {
 async function buildBasics(
   identity: string[],
   deck: DeckCard[],
-  count: number
+  count: number,
+  snow = false
 ): Promise<DeckCard[]> {
   if (count <= 0) return []
+  // No Snow-Covered Wastes exists, so colorless decks always use plain Wastes.
+  const snowName = (basic: string) => (snow ? `Snow-Covered ${basic}` : basic)
   const names = identity.length
-    ? identity.map((c) => BASIC_FOR_COLOR[c]).filter(Boolean)
+    ? identity.map((c) => BASIC_FOR_COLOR[c]).filter(Boolean).map(snowName)
     : ['Wastes']
   const pips: Record<string, number> = {}
   for (const d of deck) {

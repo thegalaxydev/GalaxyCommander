@@ -1,5 +1,12 @@
 import { useState } from 'react'
-import type { AdvancedOptions, BudgetTier, DeckPersonality, PowerProfile, ScryCard } from '../types'
+import type {
+  AdvancedOptions,
+  BudgetCaps,
+  BudgetTier,
+  DeckPersonality,
+  PowerProfile,
+  ScryCard,
+} from '../types'
 import { META_OPTIONS } from '../types'
 import { SUGGESTED_THEMES, TAGS, describeTheme } from '../themes'
 import type { EdhrecTheme } from '../edhrec'
@@ -19,6 +26,7 @@ interface Props {
   onBracket: (b: 1 | 2 | 3 | 4 | 5) => void
   budget: BudgetTier
   onBudget: (b: BudgetTier) => void
+  budgetCaps?: BudgetCaps
   themes: string[]
   onThemes: (t: string[]) => void
   edhrecThemes: EdhrecTheme[]
@@ -96,6 +104,7 @@ const OPTION_LABELS: { key: keyof AdvancedOptions; label: string }[] = [
   { key: 'latestSets', label: 'Use Latest Sets' },
   { key: 'noSpoilers', label: 'No Spoilers (released cards only)' },
   { key: 'allowUnsetCards', label: 'Allow Unset / Illegal Cards' },
+  { key: 'snowBasics', label: 'Use Snow-Covered Basics' },
 ]
 
 const PROFILE_LABELS: { key: keyof PowerProfile; label: string }[] = [
@@ -311,16 +320,32 @@ export function Sidebar(props: Props) {
       <section>
         <h2>Budget</h2>
         <div className="seg-group">
-          {BUDGET_LABELS.map(({ value, label }) => (
-            <button
-              key={value}
-              className={`seg ${props.budget === value ? 'active' : ''}`}
-              onClick={() => props.onBudget(value)}
-            >
-              {label}
-            </button>
-          ))}
+          {BUDGET_LABELS.map(({ value, label }) => {
+            const cap =
+              value !== 'any' && props.budgetCaps ? props.budgetCaps[value] : undefined
+            return (
+              <button
+                key={value}
+                className={`seg ${props.budget === value ? 'active' : ''}`}
+                onClick={() => props.onBudget(value)}
+                title={
+                  value === 'any'
+                    ? 'No price limit per card'
+                    : cap != null
+                      ? `Up to $${cap} per card`
+                      : undefined
+                }
+              >
+                {label}
+              </button>
+            )
+          })}
         </div>
+        {props.budget !== 'any' && props.budgetCaps && (
+          <p className="hint budget-cap-hint">
+            Max ${props.budgetCaps[props.budget]} per card · change in Settings → Budget tiers
+          </p>
+        )}
       </section>
 
       <section>

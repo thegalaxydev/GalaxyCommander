@@ -1,5 +1,5 @@
-import type { AdvancedOptions, BudgetTier, DeckPersonality, PowerProfile } from './types'
-import { DEFAULT_PROFILE } from './types'
+import type { AdvancedOptions, BudgetCaps, BudgetTier, DeckPersonality, PowerProfile } from './types'
+import { DEFAULT_BUDGET_CAPS, DEFAULT_PROFILE } from './types'
 import { applyPreset } from './personality'
 import type { AccentMode, UiPreset } from './themes'
 
@@ -24,6 +24,7 @@ export interface AppSettings {
   llmBaseUrl: string
   rememberDefaults: boolean
   generatorDefaults: SavedGeneratorDefaults
+  budgetCaps: BudgetCaps
   simIterations: number
   disableCardPreviews: boolean
   uiPreset: UiPreset
@@ -42,6 +43,7 @@ export const DEFAULT_OPTIONS: AdvancedOptions = {
   latestSets: true,
   noSpoilers: false,
   allowUnsetCards: false,
+  snowBasics: false,
 }
 
 export function defaultGeneratorDefaults(): SavedGeneratorDefaults {
@@ -65,6 +67,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   llmBaseUrl: '',
   rememberDefaults: true,
   generatorDefaults: defaultGeneratorDefaults(),
+  budgetCaps: { ...DEFAULT_BUDGET_CAPS },
   simIterations: 1000,
   disableCardPreviews: false,
   uiPreset: 'galaxy',
@@ -81,6 +84,7 @@ export function loadSettings(): AppSettings {
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
+      budgetCaps: { ...DEFAULT_BUDGET_CAPS, ...parsed.budgetCaps },
       generatorDefaults: {
         ...defaultGeneratorDefaults(),
         ...parsed.generatorDefaults,

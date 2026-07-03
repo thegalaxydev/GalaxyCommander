@@ -45,7 +45,7 @@ export function CardPicker({ placeholder, identity, exclude, onPick }: Props) {
     return () => document.removeEventListener('mousedown', onClick)
   }, [])
 
-  const visible = results.filter((c) => !exclude.includes(c.name))
+  const visible = results.filter((c) => !exclude.includes(c.name) && c.type_line)
 
   return (
     <div className="commander-search card-picker" ref={boxRef}>
@@ -72,8 +72,8 @@ export function CardPicker({ placeholder, identity, exclude, onPick }: Props) {
             >
               <img src={cardImage(card, 'art_crop')} alt="" />
               <div>
-                <span>{card.name.split(' //')[0]}</span>
-                <small>{card.type_line.split(' //')[0]}</small>
+                <span>{(card.name ?? '').split(' //')[0]}</span>
+                <small>{(card.type_line ?? '').split(' //')[0]}</small>
               </div>
             </div>
           ))}

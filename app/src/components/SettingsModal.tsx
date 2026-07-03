@@ -205,6 +205,41 @@ function SettingsForm({
         </section>
 
         <section className="settings-section">
+          <h3>Budget tiers</h3>
+          <p className="hint">
+            Maximum price per card for each budget level (USD). &quot;Any&quot; is always unlimited.
+          </p>
+          <div className="budget-cap-grid">
+            {(
+              [
+                { key: 'low', label: '$' },
+                { key: 'mid', label: '$$' },
+                { key: 'high', label: '$$$' },
+              ] as const
+            ).map(({ key, label }) => (
+              <label key={key} className="settings-field budget-cap-field">
+                <span>{label} max</span>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={draft.budgetCaps[key]}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      budgetCaps: {
+                        ...draft.budgetCaps,
+                        [key]: Math.max(1, Math.floor(Number(e.target.value) || 0)),
+                      },
+                    })
+                  }
+                />
+              </label>
+            ))}
+          </div>
+        </section>
+
+        <section className="settings-section">
           <h3>Playtest</h3>
           <label className="settings-field">
             <span>Opening hand simulation iterations</span>
