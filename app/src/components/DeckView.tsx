@@ -45,7 +45,17 @@ function errText(err: unknown): string {
 
 interface Hover {
   src: string
+  x: number
   y: number
+}
+
+function hoverPos(e: React.MouseEvent): { x: number; y: number } {
+  const previewW = 250
+  const previewH = 350
+  return {
+    x: Math.min(e.clientX + 20, window.innerWidth - previewW - 12),
+    y: Math.min(Math.max(e.clientY - 40, 12), window.innerHeight - previewH - 12),
+  }
 }
 
 export function DeckView({
@@ -101,11 +111,11 @@ export function DeckView({
 
   const showHover = (card: ScryCard, e: React.MouseEvent) => {
     const src = cardImage(card, 'normal')
-    if (src) setHover({ src, y: Math.min(e.clientY, window.innerHeight - 360) })
+    if (src) setHover({ src, ...hoverPos(e) })
   }
 
   const showHoverName = (name: string, e: React.MouseEvent) => {
-    setHover({ src: cardImageByName(name, 'normal'), y: Math.min(e.clientY, window.innerHeight - 360) })
+    setHover({ src: cardImageByName(name, 'normal'), ...hoverPos(e) })
   }
 
   return (
@@ -175,7 +185,7 @@ export function DeckView({
       </div>
 
       {hover && !selected && !disableCardPreviews && (
-        <img className="card-preview" src={hover.src} style={{ top: hover.y }} alt="" />
+        <img className="card-preview" src={hover.src} style={{ top: hover.y, left: hover.x }} alt="" />
       )}
       {selected && tab === 'Decklist' && (
         <CardDetailPanel deck={deck} card={selected} onClose={() => setSelected(null)} />
@@ -339,17 +349,22 @@ function Decklist({
       key={d.card.name}
       className={`deck-row ${selected?.card.name === d.card.name ? 'selected' : ''}`}
       onClick={() => onSelect(selected?.card.name === d.card.name ? null : d)}
-      onMouseEnter={(e) => onHover(d.card, e)}
-      onMouseLeave={onLeave}
     >
       <span className="deck-qty">{d.qty}</span>
       <span className="deck-name">
-        {d.card.name.split(' //')[0]}
-        {d.card.game_changer && (
-          <span className="gc-badge" title="On the Commander Game Changers list">
-            GC
-          </span>
-        )}
+        <span
+          className="deck-name-text"
+          onMouseEnter={(e) => onHover(d.card, e)}
+          onMouseMove={(e) => onHover(d.card, e)}
+          onMouseLeave={onLeave}
+        >
+          {d.card.name.split(' //')[0]}
+          {d.card.game_changer && (
+            <span className="gc-badge" title="On the Commander Game Changers list">
+              GC
+            </span>
+          )}
+        </span>
       </span>
       <ManaCost cost={d.card.mana_cost ?? d.card.card_faces?.[0]?.mana_cost ?? ''} />
       <span className="deck-price">

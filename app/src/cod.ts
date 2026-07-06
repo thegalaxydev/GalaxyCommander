@@ -1,6 +1,6 @@
 import type { Deck, ScryCard } from './types'
 
-const FULL_NAME_LAYOUTS = new Set(['split', 'adventure', 'aftermath'])
+const FULL_NAME_LAYOUTS = new Set(['split', 'adventure', 'aftermath', 'prepare'])
 
 export function codCardName(card: ScryCard): string {
   if (card.layout && FULL_NAME_LAYOUTS.has(card.layout)) return card.name

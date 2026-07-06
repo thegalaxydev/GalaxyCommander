@@ -27,12 +27,20 @@ export interface ScryCard {
   keywords?: string[]
   image_uris?: ScryImageUris
   card_faces?: ScryCardFace[]
-  prices: { usd: string | null }
+  prices: { usd: string | null; usd_foil?: string | null }
   edhrec_rank?: number
   game_changer?: boolean
   produced_mana?: string[]
   legalities: Record<string, string>
   released_at?: string
+  rarity?: string
+  set?: string
+  set_name?: string
+  collector_number?: string
+  finishes?: string[]
+  booster?: boolean
+  promo_types?: string[]
+  frame_effects?: string[]
 }
 
 export type Category =

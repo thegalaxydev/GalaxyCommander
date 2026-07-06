@@ -36,6 +36,7 @@ interface Entry {
 
 interface Hover {
   src: string
+  x: number
   y: number
 }
 
@@ -65,12 +66,17 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
   const [permaBusy, setPermaBusy] = useState(false)
   const [permaFlash, setPermaFlash] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
-  const loadedShared = useRef(false)
+  const lastLoadedDeck = useRef<CodDeck | null>(null)
 
   const showHover = (card: ScryCard | null, e: React.MouseEvent) => {
     const src = card ? cardImage(card, 'normal') : ''
-    if (src) setHover({ src, y: Math.min(e.clientY, window.innerHeight - 360) })
-    else setHover(null)
+    if (src) {
+      const previewW = 250
+      const previewH = 350
+      const x = Math.min(e.clientX + 20, window.innerWidth - previewW - 12)
+      const y = Math.min(Math.max(e.clientY - 40, 12), window.innerHeight - previewH - 12)
+      setHover({ src, x, y })
+    } else setHover(null)
   }
 
   const total = [...side, ...main].reduce((n, e) => n + e.qty, 0)
@@ -176,11 +182,10 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
   }
 
   useEffect(() => {
-    if (loadedShared.current || !initialDeck) return
-    loadedShared.current = true
+    if (!initialDeck || lastLoadedDeck.current === initialDeck) return
+    lastLoadedDeck.current = initialDeck
     setDeckId(null)
     void loadCodDeck(initialDeck)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialDeck])
 
   const shareCurrent = async () => {
@@ -606,7 +611,12 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
       </aside>
 
       {hover && (
-        <img className="card-preview" src={hover.src} style={{ top: hover.y }} alt="" />
+        <img
+          className="card-preview"
+          src={hover.src}
+          style={{ top: hover.y, left: hover.x }}
+          alt=""
+        />
       )}
     </div>
   )
@@ -684,19 +694,22 @@ function BuilderRow({
 }) {
   const card = entry.card
   return (
-    <div
-      className="deck-row builder-row"
-      onMouseEnter={(e) => onHover(card, e)}
-      onMouseLeave={onLeave}
-    >
+    <div className="deck-row builder-row">
       <span className="deck-qty">{entry.qty}</span>
       <span className="deck-name">
-        {entry.name.split(' //')[0]}
-        {card?.game_changer && (
-          <span className="gc-badge" title="On the Commander Game Changers list">
-            GC
-          </span>
-        )}
+        <span
+          className="deck-name-text"
+          onMouseEnter={(e) => onHover(card, e)}
+          onMouseMove={(e) => onHover(card, e)}
+          onMouseLeave={onLeave}
+        >
+          {entry.name.split(' //')[0]}
+          {card?.game_changer && (
+            <span className="gc-badge" title="On the Commander Game Changers list">
+              GC
+            </span>
+          )}
+        </span>
       </span>
       {card && <ManaCost cost={card.mana_cost ?? card.card_faces?.[0]?.mana_cost ?? ''} />}
       {card && (

@@ -8,7 +8,7 @@ const API = 'https://api.scryfall.com'
 function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
-const SCRY_BASE = isTauri() ? API : '/scryfall-api'
+export const SCRY_BASE = isTauri() ? API : '/scryfall-api'
 
 let lastCall = 0
 async function throttledFetch(url: string): Promise<Response> {
@@ -20,13 +20,13 @@ async function throttledFetch(url: string): Promise<Response> {
 
 export async function searchCards(
   query: string,
-  opts: { order?: string; dir?: string; max?: number } = {}
+  opts: { order?: string; dir?: string; max?: number; unique?: 'cards' | 'prints' } = {}
 ): Promise<ScryCard[]> {
   const max = opts.max ?? 175
   const params = new URLSearchParams({
     q: query,
     order: opts.order ?? 'edhrec',
-    unique: 'cards',
+    unique: opts.unique ?? 'cards',
   })
   if (opts.dir) params.set('dir', opts.dir)
   let url = `${SCRY_BASE}/cards/search?${params.toString()}`
@@ -36,7 +36,7 @@ export async function searchCards(
     if (!res.ok) return out
     const data = await res.json()
     out.push(...(data.data ?? []))
-    url = data.has_more ? data.next_page : ''
+    url = data.has_more ? String(data.next_page).replace(API, SCRY_BASE) : ''
   }
   return out.slice(0, max)
 }

@@ -33,6 +33,7 @@ import { StatsPanel } from './components/StatsPanel'
 import { DeckView } from './components/DeckView'
 import { ChatPanel } from './components/ChatPanel'
 import { DeckBuilder } from './components/DeckBuilder'
+import { PackSimulator } from './components/PackSimulator'
 import { GenProgress } from './components/GenProgress'
 import { SettingsModal } from './components/SettingsModal'
 import { generatedDeckToCod, deckToCod, downloadCod, downloadText, upsertSavedDeck, type CodDeck } from './cod'
@@ -73,7 +74,10 @@ export default function App() {
   const init = initialGeneratorState(appSettings)
 
   const [sharedDeck] = useState<CodDeck | null>(() => readSharedDeckFromUrl())
-  const [view, setView] = useState<'generate' | 'builder'>(sharedDeck ? 'builder' : 'generate')
+  const [view, setView] = useState<'generate' | 'builder' | 'packs'>(
+    sharedDeck ? 'builder' : 'generate'
+  )
+  const [builderSeed, setBuilderSeed] = useState<CodDeck | null>(null)
 
   useEffect(() => {
     if (sharedDeck) clearShareParam()
@@ -488,6 +492,17 @@ export default function App() {
     setCodSaved(true)
   }
 
+  const openPackPullsInBuilder = (cod: CodDeck) => {
+    setBuilderSeed(cod)
+    setView('builder')
+  }
+
+  const generateForOpenedCommander = (card: ScryCard) => {
+    startNewBuild()
+    void selectCommander(card)
+    setView('generate')
+  }
+
   const statsCards = generating ? liveCards : deck ? deck.cards : []
 
   return (
@@ -505,6 +520,9 @@ export default function App() {
           </button>
           <button className={view === 'builder' ? 'active' : ''} onClick={() => setView('builder')}>
             Deck Builder
+          </button>
+          <button className={view === 'packs' ? 'active' : ''} onClick={() => setView('packs')}>
+            Pack Simulator
           </button>
         </nav>
         <div className="topnav-actions">
@@ -552,7 +570,17 @@ export default function App() {
         commanderIdentity={commander ? unionIdentity(commander, partner) : null}
       />
       {view === 'builder' ? (
-        <DeckBuilder onAnalyze={analyzeBuiltDeck} onImprove={improveBuiltDeck} initialDeck={sharedDeck} />
+        <DeckBuilder
+          onAnalyze={analyzeBuiltDeck}
+          onImprove={improveBuiltDeck}
+          initialDeck={builderSeed ?? sharedDeck}
+        />
+      ) : view === 'packs' ? (
+        <PackSimulator
+          onOpenInBuilder={openPackPullsInBuilder}
+          onGenerateFor={generateForOpenedCommander}
+          disableCardPreviews={appSettings.disableCardPreviews}
+        />
       ) : (
     <div className="app">
       <Sidebar

@@ -35,7 +35,7 @@ const MENU_DESTS: ZoneId[] = ['battlefield', 'hand', 'graveyard', 'exile', 'comm
 export function SandboxPanel({ deck }: { deck: Deck }) {
   const [state, dispatch] = useReducer(sandboxReducer, deck, createSandbox)
   const [menu, setMenu] = useState<MenuState | null>(null)
-  const [preview, setPreview] = useState<{ src: string; y: number } | null>(null)
+  const [preview, setPreview] = useState<{ src: string; x: number; y: number } | null>(null)
   const [libraryOpen, setLibraryOpen] = useState(false)
 
   const onDragStart = (e: React.DragEvent, iid: string, from: ZoneId) => {
@@ -77,7 +77,11 @@ export function SandboxPanel({ deck }: { deck: Deck }) {
 
   const showPreview = (tc: TableCard, e: React.MouseEvent) => {
     const src = cardImage(tc.card, 'normal')
-    if (src) setPreview({ src, y: Math.min(e.clientY, window.innerHeight - 360) })
+    if (src) {
+      const x = Math.min(e.clientX + 20, window.innerWidth - 262)
+      const y = Math.min(Math.max(e.clientY - 40, 12), window.innerHeight - 362)
+      setPreview({ src, x, y })
+    }
   }
 
   const allowDrop = (e: React.DragEvent) => e.preventDefault()
@@ -313,7 +317,7 @@ export function SandboxPanel({ deck }: { deck: Deck }) {
       )}
 
       {preview && !menu && (
-        <img className="card-preview" src={preview.src} style={{ top: preview.y }} alt="" />
+        <img className="card-preview" src={preview.src} style={{ top: preview.y, left: preview.x }} alt="" />
       )}
     </div>
   )

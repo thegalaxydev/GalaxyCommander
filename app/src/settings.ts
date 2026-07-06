@@ -118,4 +118,9 @@ export const SIM_ITERATION_OPTIONS = [500, 1000, 2500, 5000] as const
 export function clearAllLocalData(): void {
   localStorage.removeItem(STORAGE_KEY)
   localStorage.removeItem('gc-saved-decks')
+  localStorage.removeItem('gc-pack-collection')
+  localStorage.removeItem('gc-pack-cardmeta')
+  localStorage.removeItem('gc-pack-stats')
+  localStorage.removeItem('gc-pack-sessions')
+  localStorage.removeItem('gc-pack-achievements')
 }

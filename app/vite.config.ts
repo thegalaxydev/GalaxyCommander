@@ -13,6 +13,11 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      '/scryfall-api': {
+        target: 'https://api.scryfall.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/scryfall-api/, ''),
+      },
       '/edhrec-api': {
         target: 'https://json.edhrec.com',
         changeOrigin: true,
