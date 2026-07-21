@@ -1,4 +1,5 @@
 import type { Deck, ScryCard } from './types'
+import { scheduleUserDataSync } from './auth/sync'
 
 const FULL_NAME_LAYOUTS = new Set(['split', 'adventure', 'aftermath', 'prepare'])
 
@@ -244,6 +245,9 @@ export interface SavedDeck {
   cod: string
   cards: number
   updated: number
+  public?: boolean
+  commander?: string
+  colorIdentity?: string[]
 }
 
 const STORE_KEY = 'gc-saved-decks'
@@ -257,8 +261,15 @@ export function loadSavedDecks(): SavedDeck[] {
   }
 }
 
-export function upsertSavedDeck(deck: { id?: string; name: string; cod: CodDeck }): SavedDeck {
+export function upsertSavedDeck(deck: {
+  id?: string
+  name: string
+  cod: CodDeck
+  commander?: string
+  colorIdentity?: string[]
+}): SavedDeck {
   const decks = loadSavedDecks()
+  const existing = deck.id ? decks.find((d) => d.id === deck.id) : undefined
   const entry: SavedDeck = {
     id: deck.id ?? crypto.randomUUID(),
     name: deck.name,
@@ -266,17 +277,48 @@ export function upsertSavedDeck(deck: { id?: string; name: string; cod: CodDeck 
     cards: [...deck.cod.side, ...deck.cod.main].reduce((n, c) => n + c.qty, 0),
     updated: Date.now(),
   }
+  // Preserve visibility across re-saves; carry commander/colors forward when
+  // the caller doesn't supply them.
+  if (existing?.public !== undefined) entry.public = existing.public
+  const commander = deck.commander ?? existing?.commander
+  if (commander) entry.commander = commander
+  const colorIdentity = deck.colorIdentity ?? existing?.colorIdentity
+  if (colorIdentity) entry.colorIdentity = colorIdentity
   const idx = decks.findIndex((d) => d.id === entry.id)
   if (idx >= 0) decks[idx] = entry
   else decks.unshift(entry)
   localStorage.setItem(STORE_KEY, JSON.stringify(decks))
+  scheduleUserDataSync()
   return entry
 }
 
 export function deleteSavedDeck(id: string): SavedDeck[] {
   const decks = loadSavedDecks().filter((d) => d.id !== id)
   localStorage.setItem(STORE_KEY, JSON.stringify(decks))
+  scheduleUserDataSync()
   return decks
+}
+
+export function renameSavedDeck(id: string, name: string): SavedDeck | null {
+  const trimmed = name.trim()
+  if (!trimmed) return null
+  const decks = loadSavedDecks()
+  const idx = decks.findIndex((d) => d.id === id)
+  if (idx < 0) return null
+  const deck = decks[idx]
+  let cod = deck.cod
+  try {
+    const parsed = parseCod(deck.cod)
+    parsed.name = trimmed
+    cod = deckToCod(parsed)
+  } catch {
+    /* keep existing cod body */
+  }
+  const entry: SavedDeck = { ...deck, name: trimmed, cod, updated: Date.now() }
+  decks[idx] = entry
+  localStorage.setItem(STORE_KEY, JSON.stringify(decks))
+  scheduleUserDataSync()
+  return entry
 }
 
 export function clearSavedDecks(): void {

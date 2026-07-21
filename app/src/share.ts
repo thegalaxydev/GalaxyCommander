@@ -94,7 +94,7 @@ export function clearShareParam(): void {
     const url = new URL(window.location.href)
     if (!url.searchParams.has('d')) return
     url.searchParams.delete('d')
-    const path = url.pathname === '/deck' ? '/' : url.pathname
+    const path = url.pathname === '/deck' ? '/builder' : url.pathname
     window.history.replaceState({}, '', `${path}${url.search}${url.hash}`)
   } catch {
     /* ignore */

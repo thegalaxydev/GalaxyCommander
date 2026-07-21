@@ -36,9 +36,26 @@ import { DeckBuilder } from './components/DeckBuilder'
 import { PackSimulator } from './components/PackSimulator'
 import { GenProgress } from './components/GenProgress'
 import { SettingsModal } from './components/SettingsModal'
+import { AuthModal } from './components/AuthModal'
+import { UserProfilePage } from './components/UserProfilePage'
+import { ProfileSettingsPage } from './components/ProfileSettingsPage'
+import { DeckPage } from './components/DeckPage'
+import { useAuth } from './auth/useAuth'
+import { pullUserData, setSyncEnabled } from './auth/sync'
 import { generatedDeckToCod, deckToCod, downloadCod, downloadText, upsertSavedDeck, type CodDeck } from './cod'
 import { buildShareUrl, clearShareParam, createPermalink, readSharedDeckFromUrl, shareLinkExpired } from './share'
 import { applyPreset } from './personality'
+import {
+  initialPage,
+  navigateToPage,
+  syncInitialRoute,
+  pageFromPathname,
+  NAVIGATE_EVENT,
+  type AppView,
+  type AppPage,
+  isSharedDeckPath,
+  navigateToUserProfile,
+} from './route'
 
 function initialGeneratorState(settings: AppSettings) {
   const gd = settings.rememberDefaults ? settings.generatorDefaults : defaultGeneratorDefaults()
@@ -56,6 +73,8 @@ function initialGeneratorState(settings: AppSettings) {
 export default function App() {
   const [appSettings, setAppSettings] = useState<AppSettings>(() => loadSettings())
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [authOpen, setAuthOpen] = useState(false)
+  const { user, loading: authLoading, signOut, refresh: refreshAuth } = useAuth()
   const [discordPromptOpen, setDiscordPromptOpen] = useState(() => {
     try {
       return localStorage.getItem('gc-discord-announce-v1') !== '1'
@@ -74,10 +93,53 @@ export default function App() {
   const init = initialGeneratorState(appSettings)
 
   const [sharedDeck] = useState<CodDeck | null>(() => readSharedDeckFromUrl())
-  const [view, setView] = useState<'generate' | 'builder' | 'packs'>(
-    sharedDeck ? 'builder' : 'generate'
-  )
+  const [page, setPage] = useState<AppPage>(() => initialPage(!!readSharedDeckFromUrl()))
+  const view = page.kind === 'app' ? page.view : 'generate'
   const [builderSeed, setBuilderSeed] = useState<CodDeck | null>(null)
+
+  const goToView = useCallback((next: AppView) => {
+    const nextPage: AppPage = { kind: 'app', view: next }
+    setPage(nextPage)
+    navigateToPage(nextPage)
+  }, [])
+
+  useEffect(() => {
+    syncInitialRoute()
+  }, [])
+
+  useEffect(() => {
+    const onNavigate = (event: Event) => {
+      const next = (event as CustomEvent<AppPage>).detail
+      if (next) setPage(next)
+    }
+    window.addEventListener(NAVIGATE_EVENT, onNavigate)
+    return () => window.removeEventListener(NAVIGATE_EVENT, onNavigate)
+  }, [])
+
+  useEffect(() => {
+    void (async () => {
+      const u = await refreshAuth()
+      if (u) {
+        setSyncEnabled(true)
+        await pullUserData()
+        window.dispatchEvent(new Event('gc-user-data-changed'))
+      }
+    })()
+  }, [refreshAuth])
+
+  useEffect(() => {
+    const onPop = () => {
+      const path = window.location.pathname
+      if (isSharedDeckPath(path)) {
+        setPage({ kind: 'app', view: 'builder' })
+        return
+      }
+      const fromPath = pageFromPathname(path)
+      if (fromPath) setPage(fromPath)
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
 
   useEffect(() => {
     if (sharedDeck) clearShareParam()
@@ -102,6 +164,7 @@ export default function App() {
   const [meta, setMeta] = useState<string[]>(init.meta)
   const [mustInclude, setMustInclude] = useState<ScryCard[]>([])
   const [neverInclude, setNeverInclude] = useState<ScryCard[]>([])
+  const [rules, setRules] = useState('')
 
   const [generating, setGenerating] = useState(false)
   const [steps, setSteps] = useState<GenStep[]>([])
@@ -264,6 +327,7 @@ export default function App() {
       meta,
       mustInclude,
       neverInclude: neverInclude.map((c) => c.name),
+      rules,
     })
   }
 
@@ -311,7 +375,7 @@ export default function App() {
     setLiveCards(built.cards)
     setCombos(null)
     setUpgrades([])
-    setView('generate')
+    goToView('generate')
     setCombosLoading(true)
     findCombos(built).then((c) => {
       setCombos(c)
@@ -334,7 +398,7 @@ export default function App() {
     setThemes([])
     setEdhrecThemes([])
     setMustInclude(cards)
-    setView('generate')
+    goToView('generate')
     let page = null
     if (partnerCard) {
       const a = commanderSlug(commanderCard.name)
@@ -488,25 +552,31 @@ export default function App() {
   const saveToBuilder = () => {
     if (!deck) return
     const cod = generatedDeckToCod(deck)
-    upsertSavedDeck({ name: cod.name, cod })
+    upsertSavedDeck({
+      name: cod.name,
+      cod,
+      commander: deck.commander.name.split(' //')[0],
+      colorIdentity: deck.commander.color_identity,
+    })
     setCodSaved(true)
   }
 
   const openPackPullsInBuilder = (cod: CodDeck) => {
     setBuilderSeed(cod)
-    setView('builder')
+    goToView('builder')
   }
 
   const generateForOpenedCommander = (card: ScryCard) => {
     startNewBuild()
     void selectCommander(card)
-    setView('generate')
+    goToView('generate')
   }
 
   const statsCards = generating ? liveCards : deck ? deck.cards : []
 
   return (
     <div className="shell">
+      {page.kind === 'app' && (
       <header className="topnav">
         <h1 className="logo">
           <img src="/icon.png" alt="" /> Galaxy Commander
@@ -514,14 +584,14 @@ export default function App() {
         <nav className="view-tabs">
           <button
             className={view === 'generate' ? 'active' : ''}
-            onClick={() => setView('generate')}
+            onClick={() => goToView('generate')}
           >
             Generate
           </button>
-          <button className={view === 'builder' ? 'active' : ''} onClick={() => setView('builder')}>
+          <button className={view === 'builder' ? 'active' : ''} onClick={() => goToView('builder')}>
             Deck Builder
           </button>
-          <button className={view === 'packs' ? 'active' : ''} onClick={() => setView('packs')}>
+          <button className={view === 'packs' ? 'active' : ''} onClick={() => goToView('packs')}>
             Pack Simulator
           </button>
         </nav>
@@ -556,11 +626,49 @@ export default function App() {
               />
             </svg>
           </a>
+          {user ? (
+            <>
+              {user.username && (
+                <button
+                  type="button"
+                  className="link-btn profile-link"
+                  onClick={() => {
+                    const nextPage: AppPage = { kind: 'userProfile', username: user.username! }
+                    setPage(nextPage)
+                    navigateToUserProfile(user.username!)
+                  }}
+                >
+                  {user.username}
+                </button>
+              )}
+              {user.username && (
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => {
+                    const nextPage: AppPage = { kind: 'userProfile', username: user.username! }
+                    setPage(nextPage)
+                    navigateToUserProfile(user.username!)
+                  }}
+                >
+                  Profile
+                </button>
+              )}
+              <button type="button" className="settings-btn account-btn" onClick={() => void signOut()}>
+                Sign out
+              </button>
+            </>
+          ) : (
+            <button type="button" className="settings-btn account-btn" onClick={() => setAuthOpen(true)} disabled={authLoading}>
+              {authLoading ? '…' : 'Sign in'}
+            </button>
+          )}
           <button type="button" className="settings-btn" onClick={() => setSettingsOpen(true)}>
             ⚙ Settings
           </button>
         </div>
       </header>
+      )}
       <SettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
@@ -569,7 +677,26 @@ export default function App() {
         onClearData={handleClearData}
         commanderIdentity={commander ? unionIdentity(commander, partner) : null}
       />
-      {view === 'builder' ? (
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
+      {page.kind === 'userProfile' ? (
+        <UserProfilePage username={page.username} onAuthRequired={() => setAuthOpen(true)} />
+      ) : page.kind === 'deck' ? (
+        <DeckPage
+          username={page.username}
+          deckId={page.deckId}
+          onAuthRequired={() => setAuthOpen(true)}
+        />
+      ) : page.kind === 'profileSettings' ? (
+        <ProfileSettingsPage
+          onAuthRequired={() => setAuthOpen(true)}
+          onUsernameChanged={(username) => {
+            void refreshAuth()
+            const nextPage: AppPage = { kind: 'userProfile', username }
+            setPage(nextPage)
+            navigateToUserProfile(username)
+          }}
+        />
+      ) : view === 'builder' ? (
         <DeckBuilder
           onAnalyze={analyzeBuiltDeck}
           onImprove={improveBuiltDeck}
@@ -611,6 +738,8 @@ export default function App() {
         onMustInclude={setMustInclude}
         neverInclude={neverInclude}
         onNeverInclude={setNeverInclude}
+        rules={rules}
+        onRules={setRules}
         disabled={generating}
       />
 

@@ -1,5 +1,6 @@
 import type { AdvancedOptions, BudgetCaps, BudgetTier, DeckPersonality, PowerProfile } from './types'
 import { DEFAULT_BUDGET_CAPS, DEFAULT_PROFILE } from './types'
+import { scheduleUserDataSync } from './auth/sync'
 import { applyPreset } from './personality'
 import type { AccentMode, UiPreset } from './themes'
 
@@ -105,6 +106,7 @@ export function loadSettings(): AppSettings {
 
 export function saveSettings(settings: AppSettings): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+  scheduleUserDataSync()
 }
 
 export const PROVIDER_MODELS: Record<LlmProvider, string[]> = {

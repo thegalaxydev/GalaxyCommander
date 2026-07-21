@@ -68,6 +68,12 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
   const lastLoadedDeck = useRef<CodDeck | null>(null)
 
+  useEffect(() => {
+    const refresh = () => setSaved(loadSavedDecks())
+    window.addEventListener('gc-user-data-changed', refresh)
+    return () => window.removeEventListener('gc-user-data-changed', refresh)
+  }, [])
+
   const showHover = (card: ScryCard | null, e: React.MouseEvent) => {
     const src = card ? cardImage(card, 'normal') : ''
     if (src) {
@@ -230,7 +236,13 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
   }
 
   const saveCurrent = () => {
-    const entry = upsertSavedDeck({ id: deckId ?? undefined, name: name.trim() || 'Untitled Deck', cod: toCodDeck() })
+    const entry = upsertSavedDeck({
+      id: deckId ?? undefined,
+      name: name.trim() || 'Untitled Deck',
+      cod: toCodDeck(),
+      commander: commanderCard ? codCardName(commanderCard) : undefined,
+      colorIdentity: commanderCard?.color_identity,
+    })
     setDeckId(entry.id)
     setSaved(loadSavedDecks())
     setSavedFlash(true)

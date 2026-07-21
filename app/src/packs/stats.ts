@@ -1,6 +1,7 @@
 import { cardPrice } from '../scryfall'
 import { isLegendaryCreature } from './setPool'
 import type { GeneratedPack, PackStats } from './types'
+import { scheduleUserDataSync } from '../auth/sync'
 
 const STATS_KEY = 'gc-pack-stats'
 
@@ -37,6 +38,7 @@ export function loadStats(): PackStats {
 export function saveStats(stats: PackStats): void {
   try {
     localStorage.setItem(STATS_KEY, JSON.stringify(stats))
+    scheduleUserDataSync()
   } catch {
     /* stats are best-effort */
   }

@@ -85,6 +85,18 @@ export function PackSimulator({ onOpenInBuilder, onGenerateFor, disableCardPrevi
   }, [])
 
   useEffect(() => {
+    const refresh = () => {
+      setCollection(loadCollection())
+      setMeta(loadCardMeta())
+      setStats(loadStats())
+      setSessions(loadSessions())
+      setUnlocked(loadUnlocked())
+    }
+    window.addEventListener('gc-user-data-changed', refresh)
+    return () => window.removeEventListener('gc-user-data-changed', refresh)
+  }, [])
+
+  useEffect(() => {
     if (!toasts.length) return
     toastTimer.current = window.setTimeout(() => setToasts((t) => t.slice(1)), 3500)
     return () => {

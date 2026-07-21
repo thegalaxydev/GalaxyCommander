@@ -2,6 +2,7 @@ import type { ScryCard } from '../types'
 import { cardImage, cardPrice } from '../scryfall'
 import { isLegendaryCreature } from './setPool'
 import type { CardMeta, OpenedCard } from './types'
+import { scheduleUserDataSync } from '../auth/sync'
 
 const COLLECTION_KEY = 'gc-pack-collection'
 const CARDMETA_KEY = 'gc-pack-cardmeta'
@@ -52,6 +53,7 @@ export function toCardMeta(card: ScryCard): CardMeta {
 function persist(key: string, value: unknown): boolean {
   try {
     localStorage.setItem(key, JSON.stringify(value))
+    scheduleUserDataSync()
     return true
   } catch {
     return false

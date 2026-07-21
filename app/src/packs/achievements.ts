@@ -1,4 +1,5 @@
 import type { AchievementDef, PackStats } from './types'
+import { scheduleUserDataSync } from '../auth/sync'
 
 const ACHIEVEMENTS_KEY = 'gc-pack-achievements'
 
@@ -105,6 +106,7 @@ export function checkAchievements(stats: PackStats): AchievementDef[] {
   if (fresh.length) {
     try {
       localStorage.setItem(ACHIEVEMENTS_KEY, JSON.stringify(state))
+      scheduleUserDataSync()
     } catch {
       /* best-effort */
     }

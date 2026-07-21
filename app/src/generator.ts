@@ -18,6 +18,7 @@ import { unionIdentity } from './partner'
 import { finalScore, rankInclusion, resolveWeights } from './scoring'
 import { estimateBracketFromCards, isMassLandDenial, comboMinBracket } from './analysis'
 import { findCombos } from './combos'
+import { rulesToQuery, cardMatchesRules } from './deckRules'
 
 export type ProgressFn = (stepIndex: number, cards: DeckCard[]) => void
 
@@ -406,6 +407,7 @@ export async function generateDeck(
   const avoidCombosEffective = settings.options.avoidCombos || profile.combo <= 30
   const avoidTutorsEffective = settings.options.avoidTutors || profile.tutors <= 30
   const neverSet = new Set((settings.neverInclude ?? []).map((n) => n.toLowerCase()))
+  const ruleQuery = rulesToQuery(settings.rules)
   const targets = buildTargets(settings, profile)
   const landsMatter = isLandsMatter(settings)
   const noSpoilers = !!settings.options.noSpoilers
@@ -439,13 +441,14 @@ export async function generateDeck(
   if (gcNeed > 0) {
     const priceClause = cap === Infinity ? '' : `usd<=${cap}`
     const gcPool = await searchCards(
-      `${identityQuery(identity, commanderNames)} is:gamechanger ${priceClause}`.trim(),
+      `${identityQuery(identity, commanderNames)} is:gamechanger ${priceClause} ${ruleQuery}`.trim(),
       { order: 'edhrec', max: 50 }
     )
     for (const card of gcPool) {
       if (gcNeed <= 0) break
       if (used.has(card.name)) continue
       if (!isLegal(card, noSpoilers) || !fitsIdentity(card, identity)) continue
+      if (!cardMatchesRules(card, settings.rules)) continue
       if (cardPrice(card) > cap) continue
       if (neverSet.has(card.name.toLowerCase())) continue
       if (colorless && deadInColorless(card)) continue
@@ -520,6 +523,7 @@ export async function generateDeck(
     if (card.game_changer) return
     if (colorless && deadInColorless(card)) return
     if (neverSet.has(card.name.toLowerCase())) return
+    if (!cardMatchesRules(card, settings.rules)) return
     if (cardPrice(card) > cap) return
     if (avoidTutorsEffective && isTutor(card)) return
     if (avoidCombosEffective && settings.bracket <= 3 && isComboPiece(card)) return
@@ -565,7 +569,7 @@ export async function generateDeck(
     addCandidate(card, score, reason, category)
   }
 
-  const base = identityQuery(identity, commanderNames)
+  const base = `${identityQuery(identity, commanderNames)} ${ruleQuery}`.trim()
   const scoreScry = (card: ScryCard, cat: Category, isTheme = false): number =>
     finalScore(
       {
@@ -739,25 +743,39 @@ export async function generateDeck(
       remaining -= extra.length
     }
   }
-  if (remaining > 0) {
-    const filler = await searchCards(`${base} -t:land usd<=${cap === Infinity ? 1000 : cap}`, {
-      max: remaining * 3,
-    })
+  // Pull generic staples in the color identity to top off any remaining slots.
+  // `respectRules` false is the relaxation pass: if the user's Card Rules are so
+  // tight that even the filler can't reach 100 cards, we drop the rules for the
+  // leftover slots so the deck is always complete.
+  const runFiller = async (query: string, reason: string, respectRules: boolean) => {
+    if (remaining <= 0) return
+    const filler = await searchCards(query, { max: remaining * 3 })
     for (const card of filler) {
       if (remaining <= 0) break
       if (used.has(card.name) || !isLegal(card) || cardPrice(card) > cap) continue
       if (card.game_changer) continue
       if (colorless && deadInColorless(card)) continue
       if (neverSet.has(card.name.toLowerCase())) continue
+      if (respectRules && !cardMatchesRules(card, settings.rules)) continue
       used.add(card.name)
       deck.push({
         card,
         category: categorize(card) === 'Lands' ? 'Synergy' : categorize(card),
         qty: 1,
-        reason: 'A widely played card in these colors.',
+        reason,
       })
       remaining--
     }
+  }
+
+  const priceClause = `usd<=${cap === Infinity ? 1000 : cap}`
+  await runFiller(`${base} -t:land ${priceClause}`, 'A widely played card in these colors.', true)
+  if (remaining > 0 && ruleQuery) {
+    await runFiller(
+      `${identityQuery(identity, commanderNames)} -t:land ${priceClause}`,
+      'Added to complete the deck — your Card Rules were too strict to fill all 100 cards.',
+      false
+    )
   }
   onProgress(4, deck)
 
@@ -946,10 +964,11 @@ const CATEGORY_QUERIES: Partial<Record<Category, string>> = {
 const BASIC_NAMES = /^(Snow-Covered )?(Plains|Island|Swamp|Mountain|Forest|Wastes)$/
 
 function deckIdentityQuery(deck: Deck): string {
-  return identityQuery(
+  const q = identityQuery(
     unionIdentity(deck.commander, deck.settings.partner),
     deck.cards.filter((d) => d.category === 'Commander').map((d) => d.card.name)
   )
+  return `${q} ${rulesToQuery(deck.settings.rules)}`.trim()
 }
 
 export async function swapExpensiveCards(deck: Deck, maxPrice: number): Promise<{ deck: Deck; swapped: [string, string][] }> {

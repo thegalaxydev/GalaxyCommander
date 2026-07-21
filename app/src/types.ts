@@ -135,6 +135,9 @@ export interface BuildSettings {
   meta?: string[]
   mustInclude?: ScryCard[]
   neverInclude?: string[]
+  // Scryfall-style filter fragments (e.g. `t:Legendary -t:Land`) applied to every
+  // auto-added card. See deckRules.ts.
+  rules?: string
 }
 
 export interface Deck {

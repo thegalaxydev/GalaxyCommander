@@ -1,6 +1,7 @@
 import { SCRY_BASE } from '../scryfall'
 import type { ScryCard } from '../types'
 import type { CardMeta, GeneratedPack, PackSession, ProductType } from './types'
+import { scheduleUserDataSync } from '../auth/sync'
 
 const SESSIONS_KEY = 'gc-pack-sessions'
 const MAX_SESSIONS = 100
@@ -21,6 +22,7 @@ function persistSessions(sessions: PackSession[]): void {
   for (;;) {
     try {
       localStorage.setItem(SESSIONS_KEY, JSON.stringify({ v: 1, sessions: list }))
+      scheduleUserDataSync()
       return
     } catch {
       if (list.length <= 1) return

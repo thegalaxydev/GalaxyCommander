@@ -45,6 +45,8 @@ interface Props {
   onMustInclude: (cards: ScryCard[]) => void
   neverInclude: ScryCard[]
   onNeverInclude: (cards: ScryCard[]) => void
+  rules: string
+  onRules: (rules: string) => void
   disabled: boolean
 }
 
@@ -464,8 +466,10 @@ export function Sidebar(props: Props) {
       <section>
         <button className="advanced-toggle" onClick={() => setRulesOpen(!rulesOpen)}>
           Card Rules{' '}
-          {props.mustInclude.length + props.neverInclude.length > 0 && (
-            <span className="badge">{props.mustInclude.length + props.neverInclude.length}</span>
+          {props.mustInclude.length + props.neverInclude.length + (props.rules.trim() ? 1 : 0) > 0 && (
+            <span className="badge">
+              {props.mustInclude.length + props.neverInclude.length + (props.rules.trim() ? 1 : 0)}
+            </span>
           )}{' '}
           {rulesOpen ? '▾' : '▸'}
         </button>
@@ -512,6 +516,21 @@ export function Sidebar(props: Props) {
                 </span>
               ))}
             </div>
+            <h3 className="rule-head filter">Scryfall Filters</h3>
+            <input
+              type="text"
+              className="rule-filter-input"
+              placeholder="e.g. t:Legendary -t:Land mv<=4"
+              value={props.rules}
+              onChange={(e) => props.onRules(e.target.value)}
+            />
+            <p className="hint">
+              Scryfall syntax applied to every card added. Space-separated terms all
+              must match; prefix with <code>-</code> to exclude. Supports{' '}
+              <code>t:</code> (type), <code>o:</code> (text), <code>c:</code>/
+              <code>id:</code> (color), <code>mv</code>, <code>r:</code> (rarity),{' '}
+              <code>kw:</code>, <code>is:</code>.
+            </p>
           </div>
         )}
       </section>
