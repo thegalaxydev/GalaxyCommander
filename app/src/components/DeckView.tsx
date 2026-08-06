@@ -16,6 +16,7 @@ import { CardDetailPanel } from './CardDetailPanel'
 import { SvgIcon } from './Icons'
 import { CATEGORY_ICONS, identityInfo } from '../iconData'
 import { unionIdentity } from '../partner'
+import { combineRulebreakers } from '../rulebreaker'
 import type { VariantKind } from '../chat'
 
 const TABS = ['Overview', 'Decklist', 'Combos', 'Playtest', 'Upgrade Paths', 'Play Guide'] as const
@@ -213,6 +214,7 @@ function Overview({
   const bracketEst = estimateBracket(deck, combos)
   const partner = deck.settings.partner
   const identity = identityInfo(unionIdentity(deck.commander, partner))
+  const rulebreaker = combineRulebreakers(deck.commander, partner)
   return (
     <div className="overview">
       <div
@@ -235,7 +237,18 @@ function Overview({
             <span className="identity-badge">
               {identity.icon && <SvgIcon name={identity.icon} size={15} />}
               {identity.name}
-            </span>{' '}
+            </span>
+            {rulebreaker && (
+              <>
+                {' '}
+                <span
+                  className="identity-badge rulebreaker-badge"
+                  title={rulebreaker.text.join('\n')}
+                >
+                  Rulebreaker
+                </span>
+              </>
+            )}{' '}
             ·{' '}
             {deck.settings.themes.length
               ? deck.settings.themes.join(' / ')

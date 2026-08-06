@@ -15,6 +15,15 @@ import { searchCards, cardOracle, cardPrice, cardManaCost, legalOrUpcoming } fro
 import { commanderSlug, fetchEdhrecPageBySlug, resolveCards, type EdhrecRec, type EdhrecPage } from './edhrec'
 import { themeQuery, TAG_QUERIES, detectTribe } from './themes'
 import { unionIdentity } from './partner'
+import {
+  combineRulebreakers,
+  effectiveManaColors,
+  identityClause,
+  normalizeChoices,
+  rulebreakerAllows,
+  type RulebreakerChoices,
+  type RulebreakerMode,
+} from './rulebreaker'
 import { finalScore, rankInclusion, resolveWeights } from './scoring'
 import { estimateBracketFromCards, isMassLandDenial, comboMinBracket } from './analysis'
 import { findCombos } from './combos'
@@ -43,12 +52,69 @@ interface Candidate {
   reason: string
 }
 
-function identityQuery(identity: string[], excludeNames: string[]): string {
-  const id = identity.length ? identity.join('').toLowerCase() : 'c'
+/**
+ * The colors a deck may play. Normally just the commander's identity, but a
+ * Rulebreaker commander carves out exceptions — see rulebreaker.ts.
+ */
+export interface DeckIdentity {
+  /** The commanders' printed color identity. Still governs the mana base. */
+  identity: string[]
+  rulebreaker: RulebreakerMode | null
+  /** The player's choices about how the exceptions get used. */
+  choices: RulebreakerChoices
+  /** `identity` plus any splash — the colors the mana base must produce. */
+  manaColors: string[]
+}
+
+function deckIdentity(
+  commander: ScryCard,
+  partner?: ScryCard | null,
+  choices?: RulebreakerChoices | null
+): DeckIdentity {
+  const identity = unionIdentity(commander, partner)
+  const rulebreaker = combineRulebreakers(commander, partner)
+  const picked = normalizeChoices(choices)
+  const resolved: RulebreakerChoices = {
+    splash: rulebreaker?.needsSplashColor ? picked.splash : null,
+    colors: picked.colors,
+  }
+  return {
+    identity,
+    rulebreaker,
+    choices: resolved,
+    manaColors: effectiveManaColors(rulebreaker, identity, resolved),
+  }
+}
+
+/** Pulls the Rulebreaker choices a build was configured with off its settings. */
+function choicesOf(settings: BuildSettings): RulebreakerChoices {
+  return { splash: settings.splashColor, colors: settings.rulebreakerColors }
+}
+
+/** Commander decks are exactly 100 cards unless a Rulebreaker clause says otherwise. */
+export const DEFAULT_DECK_SIZE = 100
+
+export function resolveDeckSize(settings: BuildSettings, ctx?: DeckIdentity): number {
+  const idCtx = ctx ?? deckIdentity(settings.commander, settings.partner, choicesOf(settings))
+  if (!idCtx.rulebreaker?.noMaxDeckSize) return DEFAULT_DECK_SIZE
+  const requested = settings.deckSize ?? DEFAULT_DECK_SIZE
+  // "No maximum" still has a minimum, and an unbounded upper end is a footgun
+  // for a generator that fetches every card it considers.
+  return Math.min(400, Math.max(DEFAULT_DECK_SIZE, Math.round(requested)))
+}
+
+function deckIdentityOf(deck: Deck): DeckIdentity {
+  return deckIdentity(deck.commander, deck.settings.partner, choicesOf(deck.settings))
+}
+
+function identityQuery(ctx: DeckIdentity, excludeNames: string[]): string {
+  // Rulebreaker exceptions widen the search rather than replacing it, so the
+  // commander's own colors stay in the pool alongside the exempt cards.
+  const idClause = identityClause(ctx.identity, ctx.rulebreaker, ctx.choices)
   const excludes = excludeNames
     .map((n) => `-name:"${n.split('//')[0].trim()}"`)
     .join(' ')
-  return `${legalOrUpcoming()} id<=${id} ${excludes}`
+  return `${legalOrUpcoming()} ${idClause} ${excludes}`
 }
 
 function isLegal(card: ScryCard, noSpoilers = false): boolean {
@@ -57,9 +123,10 @@ function isLegal(card: ScryCard, noSpoilers = false): boolean {
   return !!card.released_at && new Date(card.released_at) > new Date()
 }
 
-function fitsIdentity(card: ScryCard, identity: string[]): boolean {
-  const id = new Set(identity)
-  return card.color_identity.every((c) => id.has(c))
+function fitsIdentity(card: ScryCard, ctx: DeckIdentity): boolean {
+  const id = new Set(ctx.identity)
+  if (card.color_identity.every((c) => id.has(c))) return true
+  return rulebreakerAllows(ctx.rulebreaker, card, ctx.identity, ctx.choices)
 }
 
 const BASIC_TYPE_COLOR: Record<string, string> = {
@@ -164,8 +231,60 @@ function isLandRamp(card: ScryCard): boolean {
   )
 }
 
-interface CardWithPower extends ScryCard {
-  power?: string
+// A board wipe has to actually *remove* a board. Matching bare "each creature"
+// swept up every anthem and counter-doubler (Bristly Bill, Spine Sower reads
+// "Double the number of +1/+1 counters on each creature you control"), so each
+// alternative below pairs a mass quantifier with a destructive verb.
+//
+// Two kinds of near-miss are filtered out rather than matched:
+//  - combat-scoped effects ("destroy all creatures blocking it"), which read
+//    like a wipe but only ever hit the creatures in one combat;
+//  - self-sacrifice combos ("sacrifice all creatures you control, then create
+//    that many tokens"), which are engine pieces, not removal.
+const COMBAT_SCOPED = /\b(?:blocking|blocked by|becomes blocked)\b/i
+const SELF_SACRIFICE = /\b(?:sacrifice|exile)\s+(?:all|each)\s+creatures?\s+you\s+control\b/i
+
+// Amounts are written as digits or as X, and the mass noun often carries a
+// qualifier ("each non-Dragon creature", "each creature with flying").
+const N = String.raw`(?:\d+|X)`
+const EACH_CREATURE = String.raw`each\s+(?:\w+[- ]){0,3}creature`
+const MINUS = '[-−]'
+
+const BOARD_WIPE_PATTERNS: RegExp[] = [
+  // Destroy/exile all or each creature — the classic wrath.
+  /\b(?:destroy|exile)\s+(?:all|each)\b/i,
+  // Mass bounce and mass tuck count too (Aetherize, Evacuation, Coastal Breach).
+  /\breturn\s+all\s+[^.]*(?:creatures?|permanents)\b/i,
+  // -X/-Y sweepers, but only when toughness actually drops; "-1/-0" is a
+  // combat trick (Bone Flute), not a wipe.
+  new RegExp(String.raw`\b(?:all|each)\s+(?:other\s+)?creatures?\s+gets?\s+${MINUS}${N}\/${MINUS}(?:[1-9]|X)`, 'i'),
+  new RegExp(
+    String.raw`\bcreatures?\s+(?:your opponents?|target player|each player|they)[^.]*?gets?\s+${MINUS}${N}\/${MINUS}(?:[1-9]|X)`,
+    'i'
+  ),
+  // -1/-1 counters spread across the board (Black Sun's Zenith).
+  new RegExp(String.raw`${MINUS}1\/${MINUS}1\s+counters?\s+on\s+${EACH_CREATURE}`, 'i'),
+  // Mass damage. The amount is often split across a sentence that hits a player
+  // first ("deals X damage to target player and each creature that player
+  // controls"), so the damage clause and the mass noun are matched separately.
+  new RegExp(String.raw`\b${N}\s+damage\s+to\s+[^.]*?${EACH_CREATURE}`, 'i'),
+  new RegExp(String.raw`deals?\s+damage\s+equal[^.]*?to\s+[^.]*?${EACH_CREATURE}`, 'i'),
+  // Mass sacrifice, including the "keep N, sacrifice the rest" template.
+  /\beach\s+player\s+sacrifices\b/i,
+  /\bsacrifices?\s+all\b/i,
+  /\bsacrifices?\s+the\s+rest\b/i,
+]
+
+function isBoardWipe(text: string): boolean {
+  return BOARD_WIPE_PATTERNS.some((re) => {
+    const match = text.match(re)
+    if (!match) return false
+    // Judge the sentence the match landed in, not the whole card.
+    const start = text.lastIndexOf('.', match.index ?? 0) + 1
+    const end = text.indexOf('.', (match.index ?? 0) + match[0].length)
+    const sentence = text.slice(start, end === -1 ? undefined : end)
+    return !COMBAT_SCOPED.test(sentence) && !SELF_SACRIFICE.test(sentence)
+  })
 }
 
 export function categorize(card: ScryCard): Category {
@@ -178,17 +297,17 @@ export function categorize(card: ScryCard): Category {
       /search your library for (a|up to two|up to three) (basic )?lands?/i.test(text))
   )
     return 'Ramp'
+  // Checked ahead of card draw so a wrath that cantrips is still a wrath.
+  if (isBoardWipe(text)) return 'Board Wipes'
   if (/draw (a card|two cards|three cards|x cards|that many cards|cards equal)/i.test(text) && card.cmc <= 5)
     return 'Card Draw'
-  if (/destroy all|exile all|all creatures get -|each creature|sacrifices? all/i.test(text))
-    return 'Board Wipes'
   if (
     /destroy target|exile target|counter target|deals? \d+ damage to any target|deals? damage equal .* to target|fight target/i.test(
       text
     )
   )
     return 'Removal'
-  const pow = parseInt((card as CardWithPower).power ?? '0', 10)
+  const pow = parseInt(card.power ?? '0', 10)
   if (
     pow >= 6 ||
     /wins? the game|loses? the game|take an extra turn|double strike.*trample|combat damage to a player, /i.test(text)
@@ -399,7 +518,8 @@ export async function generateDeck(
 ): Promise<Deck> {
   const { commander } = settings
   const partner = settings.partner ?? null
-  const identity = unionIdentity(commander, partner)
+  const idCtx = deckIdentity(commander, partner, choicesOf(settings))
+  const { identity, manaColors } = idCtx
   const colorless = identity.length === 0
   const commanderNames = partner ? [commander.name, partner.name] : [commander.name]
   const cap = budgetCap(settings.budget, settings.budgetCaps)
@@ -408,7 +528,16 @@ export async function generateDeck(
   const avoidTutorsEffective = settings.options.avoidTutors || profile.tutors <= 30
   const neverSet = new Set((settings.neverInclude ?? []).map((n) => n.toLowerCase()))
   const ruleQuery = rulesToQuery(settings.rules)
+  const deckSize = resolveDeckSize(settings, idCtx)
   const targets = buildTargets(settings, profile)
+  // Every ratio in buildTargets is tuned for a 99-card list; a Rulebreaker deck
+  // with no size limit needs them scaled or it ends up all filler and no lands.
+  if (deckSize !== DEFAULT_DECK_SIZE) {
+    const scale = (deckSize - commanderNames.length) / (DEFAULT_DECK_SIZE - commanderNames.length)
+    for (const key of Object.keys(targets) as (keyof Targets)[]) {
+      targets[key] = Math.round(targets[key] * scale)
+    }
+  }
   const landsMatter = isLandsMatter(settings)
   const noSpoilers = !!settings.options.noSpoilers
   const personality = settings.personality ?? 'custom'
@@ -423,7 +552,7 @@ export async function generateDeck(
 
   let mustLands = 0
   for (const card of settings.mustInclude ?? []) {
-    if (used.has(card.name) || !fitsIdentity(card, identity)) continue
+    if (used.has(card.name) || !fitsIdentity(card, idCtx)) continue
     const cat = categorize(card)
     used.add(card.name)
     deck.push({ card, category: cat, qty: 1, reason: 'Pinned by you as a must-include.' })
@@ -441,13 +570,13 @@ export async function generateDeck(
   if (gcNeed > 0) {
     const priceClause = cap === Infinity ? '' : `usd<=${cap}`
     const gcPool = await searchCards(
-      `${identityQuery(identity, commanderNames)} is:gamechanger ${priceClause} ${ruleQuery}`.trim(),
+      `${identityQuery(idCtx, commanderNames)} is:gamechanger ${priceClause} ${ruleQuery}`.trim(),
       { order: 'edhrec', max: 50 }
     )
     for (const card of gcPool) {
       if (gcNeed <= 0) break
       if (used.has(card.name)) continue
-      if (!isLegal(card, noSpoilers) || !fitsIdentity(card, identity)) continue
+      if (!isLegal(card, noSpoilers) || !fitsIdentity(card, idCtx)) continue
       if (!cardMatchesRules(card, settings.rules)) continue
       if (cardPrice(card) > cap) continue
       if (neverSet.has(card.name.toLowerCase())) continue
@@ -517,8 +646,8 @@ export async function generateDeck(
 
   const pool = new Map<Category, Candidate[]>()
   const addCandidate = (card: ScryCard, score: number, reason: string, cat?: Category) => {
-    if (!isLegal(card, noSpoilers) || !fitsIdentity(card, identity)) return
-    if (offColorFetchLand(card, identity)) return
+    if (!isLegal(card, noSpoilers) || !fitsIdentity(card, idCtx)) return
+    if (offColorFetchLand(card, manaColors)) return
     if (/\bBasic\b/.test(card.type_line)) return
     if (card.game_changer) return
     if (colorless && deadInColorless(card)) return
@@ -534,7 +663,7 @@ export async function generateDeck(
       if (isLandRamp(card)) adjScore += 2.5
       else if (isManaRock(card)) adjScore -= 2
     }
-    if (category === 'Lands') adjScore += landFixingScore(card, identity, cap)
+    if (category === 'Lands') adjScore += landFixingScore(card, manaColors, cap)
     const list = pool.get(category) ?? []
     if (list.some((c) => c.card.name === card.name)) return
     list.push({ card, score: adjScore, reason })
@@ -569,7 +698,7 @@ export async function generateDeck(
     addCandidate(card, score, reason, category)
   }
 
-  const base = `${identityQuery(identity, commanderNames)} ${ruleQuery}`.trim()
+  const base = `${identityQuery(idCtx, commanderNames)} ${ruleQuery}`.trim()
   const scoreScry = (card: ScryCard, cat: Category, isTheme = false): number =>
     finalScore(
       {
@@ -609,7 +738,7 @@ export async function generateDeck(
   // colors. They have no drawback but low EDHREC inclusion (price), so they'd
   // never make the search-driven pool on their own.
   if (!Number.isFinite(cap)) {
-    const idSet = new Set(identity)
+    const idSet = new Set(manaColors)
     const wanted = ORIGINAL_DUAL_LANDS.filter((d) => d.colors.every((c) => idSet.has(c))).map(
       (d) => d.name
     )
@@ -649,8 +778,8 @@ export async function generateDeck(
   }
 
   const utilityLandCount = Math.min(
-    targets.lands - minBasics(identity),
-    identity.length >= 3 ? 22 : 16
+    targets.lands - minBasics(manaColors),
+    manaColors.length >= 3 ? 22 : 16
   )
   const lands = take('Lands', Math.max(4, Math.max(8, utilityLandCount) - mustLands))
   deck.push(...lands)
@@ -719,7 +848,7 @@ export async function generateDeck(
   deck.push(...take('Finishers', targets.finishers))
   onProgress(3, deck)
 
-  const nonLandSlots = (partner ? 98 : 99) - targets.lands
+  const nonLandSlots = deckSize - commanderNames.length - targets.lands
   let remaining = nonLandSlots - deck.filter((d) => d.category !== 'Lands' && d.category !== 'Commander').length
   const maxExpensive = settings.tags.includes('Aggro') ? 6 : settings.bracket >= 4 ? 9 : 12
   const synergyList = (pool.get('Synergy') ?? []).sort((a, b) => b.score - a.score)
@@ -772,7 +901,7 @@ export async function generateDeck(
   await runFiller(`${base} -t:land ${priceClause}`, 'A widely played card in these colors.', true)
   if (remaining > 0 && ruleQuery) {
     await runFiller(
-      `${identityQuery(identity, commanderNames)} -t:land ${priceClause}`,
+      `${identityQuery(idCtx, commanderNames)} -t:land ${priceClause}`,
       'Added to complete the deck — your Card Rules were too strict to fill all 100 cards.',
       false
     )
@@ -781,7 +910,12 @@ export async function generateDeck(
 
   const landCount = deck.filter((d) => d.category === 'Lands').reduce((n, d) => n + d.qty, 0)
   const basicsNeeded = Math.max(0, targets.lands - landCount)
-  const basics = await buildBasics(identity, deck, basicsNeeded, settings.options.snowBasics)
+  const basics = await buildBasics(
+    basicColors(idCtx, deck),
+    deck,
+    basicsNeeded,
+    settings.options.snowBasics
+  )
   deck.push(...basics)
 
   const finalDeck = deck.filter(
@@ -796,7 +930,7 @@ export async function generateDeck(
       settings,
       pool,
       used,
-      identity,
+      idCtx,
       colorless,
       neverSet,
       cap,
@@ -824,7 +958,7 @@ interface PruneCtx {
   settings: BuildSettings
   pool: Map<Category, Candidate[]>
   used: Set<string>
-  identity: string[]
+  idCtx: DeckIdentity
   colorless: boolean
   neverSet: Set<string>
   cap: number
@@ -833,7 +967,7 @@ interface PruneCtx {
 }
 
 async function pruneTwoCardCombos(finalDeck: DeckCard[], ctx: PruneCtx): Promise<DeckCard[]> {
-  const { commander, partner, settings, pool, used, identity, colorless, neverSet, cap, base, noSpoilers } = ctx
+  const { commander, partner, settings, pool, used, idCtx, colorless, neverSet, cap, base, noSpoilers } = ctx
   try {
     const probe: Deck = { commander, cards: finalDeck, settings, power: 0, description: '' }
     const found = await findCombos(probe)
@@ -891,7 +1025,7 @@ async function pruneTwoCardCombos(finalDeck: DeckCard[], ctx: PruneCtx): Promise
         if (replacements.length >= need) break
         const nm = card.name
         if (used.has(nm) || deckNames.has(nm) || comboNames.has(nm)) continue
-        if (!isLegal(card, noSpoilers) || !fitsIdentity(card, identity)) continue
+        if (!isLegal(card, noSpoilers) || !fitsIdentity(card, idCtx)) continue
         if (card.game_changer || cardPrice(card) > cap) continue
         if (colorless && deadInColorless(card)) continue
         if (neverSet.has(nm.toLowerCase())) continue
@@ -965,7 +1099,7 @@ const BASIC_NAMES = /^(Snow-Covered )?(Plains|Island|Swamp|Mountain|Forest|Waste
 
 function deckIdentityQuery(deck: Deck): string {
   const q = identityQuery(
-    unionIdentity(deck.commander, deck.settings.partner),
+    deckIdentityOf(deck),
     deck.cards.filter((d) => d.category === 'Commander').map((d) => d.card.name)
   )
   return `${q} ${rulesToQuery(deck.settings.rules)}`.trim()
@@ -973,7 +1107,7 @@ function deckIdentityQuery(deck: Deck): string {
 
 export async function swapExpensiveCards(deck: Deck, maxPrice: number): Promise<{ deck: Deck; swapped: [string, string][] }> {
   const used = new Set(deck.cards.map((d) => d.card.name))
-  const identity = unionIdentity(deck.commander, deck.settings.partner)
+  const { identity, manaColors } = deckIdentityOf(deck)
   const colorless = identity.length === 0
   const base = deckIdentityQuery(deck)
   const expensive = deck.cards.filter(
@@ -997,7 +1131,7 @@ export async function swapExpensiveCards(deck: Deck, maxPrice: number): Promise<
         isLegal(c, !!deck.settings.options.noSpoilers) &&
         cardPrice(c) <= maxPrice &&
         !(colorless && deadInColorless(c)) &&
-        !offColorFetchLand(c, identity)
+        !offColorFetchLand(c, manaColors)
     )
     if (!replacement) return d
     used.add(replacement.name)
@@ -1016,7 +1150,7 @@ export async function computeTieredUpgrades(deck: Deck): Promise<UpgradeTier[]> 
   const inDeck = new Set(deck.cards.map((d) => d.card.name))
   const usedOut = new Set<string>()
   const reservedIn = new Set<string>()
-  const identity = unionIdentity(deck.commander, deck.settings.partner)
+  const { identity, manaColors } = deckIdentityOf(deck)
   const colorless = identity.length === 0
   const base = deckIdentityQuery(deck)
 
@@ -1059,7 +1193,7 @@ export async function computeTieredUpgrades(deck: Deck): Promise<UpgradeTier[]> 
         if (inDeck.has(c.name) || reservedIn.has(c.name)) return false
         if (!isLegal(c, !!deck.settings.options.noSpoilers)) return false
         if (colorless && deadInColorless(c)) return false
-        if (offColorFetchLand(c, identity)) return false
+        if (offColorFetchLand(c, manaColors)) return false
         const p = cardPrice(c)
         if (p <= outPrice || p > cap) return false
         const inRank = c.edhrec_rank ?? 20000
@@ -1091,7 +1225,7 @@ export async function computeTieredUpgrades(deck: Deck): Promise<UpgradeTier[]> 
 export async function computeUpgrades(deck: Deck): Promise<{ card: ScryCard; note: string }[]> {
   const cap = budgetCap(deck.settings.budget, deck.settings.budgetCaps)
   const used = new Set(deck.cards.map((d) => d.card.name))
-  const colorless = unionIdentity(deck.commander, deck.settings.partner).length === 0
+  const colorless = deckIdentityOf(deck).identity.length === 0
   const base = deckIdentityQuery(deck)
   const priceFilter = cap === Infinity ? 'usd>10' : `usd>${cap}`
   const candidates = await searchCards(`${base} -t:basic ${priceFilter}`, { max: 30 })
@@ -1119,6 +1253,37 @@ const BASIC_FOR_COLOR: Record<string, string> = {
   G: 'Forest',
 }
 
+/** Counts colored mana symbols in the deck's nonland cards, per color. */
+function countPips(deck: DeckCard[], colors: string[]): Record<string, number> {
+  const pips: Record<string, number> = {}
+  for (const d of deck) {
+    if (d.category === 'Lands') continue
+    const cost = cardManaCost(d.card)
+    for (const c of colors) {
+      pips[c] = (pips[c] ?? 0) + (cost.match(new RegExp(`\\{[^}]*${c}[^}]*\\}`, 'g'))?.length ?? 0)
+    }
+  }
+  return pips
+}
+
+// A Rulebreaker deck only earns an off-color basic once enough cards actually
+// need that color. Set high enough that a qualifying color gets a couple of
+// basics rather than a lone one, which would rarely be drawn when needed.
+const OFFCOLOR_PIP_THRESHOLD = 6
+
+/**
+ * Which basics to run. Normally the commander's colors, but a commander that
+ * grants "any basic land cards" is granting exactly the fixing its off-color
+ * cards need — without it, those cards are in the deck but uncastable.
+ */
+function basicColors(ctx: DeckIdentity, deck: DeckCard[]): string[] {
+  if (!ctx.rulebreaker?.anyBasicLands) return ctx.manaColors
+  const order = ['W', 'U', 'B', 'R', 'G']
+  const pips = countPips(deck, order)
+  const own = new Set(ctx.manaColors)
+  return order.filter((c) => own.has(c) || (pips[c] ?? 0) >= OFFCOLOR_PIP_THRESHOLD)
+}
+
 async function buildBasics(
   identity: string[],
   deck: DeckCard[],
@@ -1131,14 +1296,7 @@ async function buildBasics(
   const names = identity.length
     ? identity.map((c) => BASIC_FOR_COLOR[c]).filter(Boolean).map(snowName)
     : ['Wastes']
-  const pips: Record<string, number> = {}
-  for (const d of deck) {
-    if (d.category === 'Lands') continue
-    const cost = cardManaCost(d.card)
-    for (const c of identity) {
-      pips[c] = (pips[c] ?? 0) + (cost.match(new RegExp(`\\{[^}]*${c}[^}]*\\}`, 'g'))?.length ?? 0)
-    }
-  }
+  const pips = countPips(deck, identity)
   const totalPips = Object.values(pips).reduce((a, b) => a + b, 0) || 1
   const resolved = await resolveCards(names)
   const out: DeckCard[] = []

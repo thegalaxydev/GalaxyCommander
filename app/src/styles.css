@@ -5397,3 +5397,34 @@ html[data-reduced-motion='on'] .achievement-toast {
     width: 100%;
   }
 }
+
+/* Rulebreaker — the keyword that lets a deck run cards outside its commander's
+   color identity. Marked in warning-adjacent tones so an off-color decklist
+   reads as deliberate rather than a generator bug. */
+.rulebreaker-badge {
+  border-color: color-mix(in srgb, var(--accent-a) 60%, transparent);
+  color: var(--accent-a);
+}
+
+.sidebar section.rulebreaker .rulebreaker-text {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.sidebar section.rulebreaker .deck-size-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar section.rulebreaker .deck-size-row input[type='range'] {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar section.rulebreaker .deck-size-row input[type='number'] {
+  width: 68px;
+  flex: none;
+}

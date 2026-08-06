@@ -13,7 +13,15 @@ import type {
   ScryCard,
   UpgradeTier,
 } from './types'
-import { GEN_STEPS, computeTieredUpgrades, deckFromCards, generateDeck, swapExpensiveCards } from './generator'
+import {
+  DEFAULT_DECK_SIZE,
+  GEN_STEPS,
+  computeTieredUpgrades,
+  resolveDeckSize,
+  deckFromCards,
+  generateDeck,
+  swapExpensiveCards,
+} from './generator'
 import { findCombos } from './combos'
 import { commanderSlug, fetchEdhrecPage, fetchEdhrecPageBySlug, type EdhrecTheme } from './edhrec'
 import { unionIdentity } from './partner'
@@ -30,6 +38,7 @@ import {
 import { Sidebar } from './components/Sidebar'
 import { BuilderPanel } from './components/BuilderPanel'
 import { StatsPanel } from './components/StatsPanel'
+import { WUBRG } from './rulebreaker'
 import { DeckView } from './components/DeckView'
 import { ChatPanel } from './components/ChatPanel'
 import { DeckBuilder } from './components/DeckBuilder'
@@ -165,6 +174,9 @@ export default function App() {
   const [mustInclude, setMustInclude] = useState<ScryCard[]>([])
   const [neverInclude, setNeverInclude] = useState<ScryCard[]>([])
   const [rules, setRules] = useState('')
+  const [splashColor, setSplashColor] = useState<string | null>(null)
+  const [rulebreakerColors, setRulebreakerColors] = useState<string[]>([...WUBRG])
+  const [deckSize, setDeckSize] = useState(DEFAULT_DECK_SIZE)
 
   const [generating, setGenerating] = useState(false)
   const [steps, setSteps] = useState<GenStep[]>([])
@@ -240,6 +252,10 @@ export default function App() {
     setPartner(null)
     setThemes([])
     setEdhrecThemes([])
+    // Rulebreaker choices are about the previous commander's clauses.
+    setSplashColor(null)
+    setRulebreakerColors([...WUBRG])
+    setDeckSize(DEFAULT_DECK_SIZE)
     if (!card) {
       return
     }
@@ -328,6 +344,9 @@ export default function App() {
       mustInclude,
       neverInclude: neverInclude.map((c) => c.name),
       rules,
+      splashColor,
+      rulebreakerColors,
+      deckSize,
     })
   }
 
@@ -740,6 +759,12 @@ export default function App() {
         onNeverInclude={setNeverInclude}
         rules={rules}
         onRules={setRules}
+        splashColor={splashColor}
+        onSplashColor={setSplashColor}
+        rulebreakerColors={rulebreakerColors}
+        onRulebreakerColors={setRulebreakerColors}
+        deckSize={deckSize}
+        onDeckSize={setDeckSize}
         disabled={generating}
       />
 
@@ -846,7 +871,7 @@ export default function App() {
       </main>
 
       <aside className="right">
-        <StatsPanel cards={statsCards} />
+        <StatsPanel cards={statsCards} size={deck ? resolveDeckSize(deck.settings) : deckSize} />
         {deck && !generating && (
           <ChatPanel
             messages={chatMessages}

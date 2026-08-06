@@ -27,6 +27,12 @@ No API keys are required for deck generation — all card data comes from free p
 - Commander search suggests the most-played commanders when focused empty.
 - Partner commander support: generic Partner, "Partner with", Friends Forever, Choose a Background, and Doctor's Companion pairings, with combined color identity and EDHREC pair-page data.
 - **Partner Discovery** panel surfacing popular EDHREC partners for the chosen commander.
+- **Rulebreaker** commanders (Mystery Booster Commander Edition) are fully supported — the keyword that lets a deck break a deckbuilding rule. The clause is parsed off the card, so each kind is handled on its own terms:
+  - *Card-class exceptions* — Valko Indorian (Phyrexians), Seluma (Angels), The Unluckiest Planeswalker (Auras), The Everforger (artifact creatures & Equipment), Maular (creatures MV 7+), and friends widen both the Scryfall search and the legality check to let those cards in at any color identity.
+  - *Off-color basics* — when a commander grants "any basic land cards", the mana base allocates them by the deck's actual pip demand, so the off-color cards it let in are castable.
+  - *Any land* — Grizzlegom, Hurloon Hero unlocks the entire nonbasic mana base.
+  - *Chosen splash* — Tolabow, Loch Rascal adds a colour picker to the sidebar for its "one color of your choice" clause.
+  - *No maximum deck size* — Whtz, the Bibliophile adds a deck-size control, and the whole build (slot targets, land count, stats) scales to it.
 
 ### Deck view
 

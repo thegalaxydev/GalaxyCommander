@@ -134,6 +134,7 @@ const MLD_NAMES = new Set(
     'Winter Orb',
     'Static Orb',
     'Stasis',
+    'Storm Cauldron',
     'Back to Basics',
     'Sunder',
     'Wildfire',

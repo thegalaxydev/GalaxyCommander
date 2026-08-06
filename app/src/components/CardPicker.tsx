@@ -1,15 +1,30 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ScryCard } from '../types'
 import { searchCards, cardImage, legalOrUpcoming } from '../scryfall'
+import {
+  identityClause,
+  type RulebreakerChoices,
+  type RulebreakerMode,
+} from '../rulebreaker'
 
 interface Props {
   placeholder: string
   identity?: string[]
+  /** Rulebreaker clauses that widen `identity`, if the commander has any. */
+  rulebreaker?: RulebreakerMode | null
+  rulebreakerChoices?: RulebreakerChoices | null
   exclude: string[]
   onPick: (card: ScryCard) => void
 }
 
-export function CardPicker({ placeholder, identity, exclude, onPick }: Props) {
+export function CardPicker({
+  placeholder,
+  identity,
+  rulebreaker,
+  rulebreakerChoices,
+  exclude,
+  onPick,
+}: Props) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<ScryCard[]>([])
   const [open, setOpen] = useState(false)
@@ -25,7 +40,9 @@ export function CardPicker({ placeholder, identity, exclude, onPick }: Props) {
         return
       }
       setLoading(true)
-      const idFilter = identity?.length ? ` id<=${identity.join('').toLowerCase()}` : ''
+      const idFilter = identity?.length
+        ? ` ${identityClause(identity, rulebreaker, rulebreakerChoices)}`
+        : ''
       const cards = await searchCards(`${legalOrUpcoming()}${idFilter} name:"${clean}"`, {
         order: 'edhrec',
         max: 8,
@@ -35,7 +52,7 @@ export function CardPicker({ placeholder, identity, exclude, onPick }: Props) {
       setOpen(true)
     }, 300)
     return () => clearTimeout(t)
-  }, [query, identity])
+  }, [query, identity, rulebreaker, rulebreakerChoices])
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {

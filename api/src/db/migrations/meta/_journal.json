@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1783320543915,
+      "tag": "0000_ambitious_jubilee",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1783321136361,
+      "tag": "0001_aberrant_cargill",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783322000000,
+      "tag": "0002_profile_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783322500000,
+      "tag": "0003_username_changed_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783323000000,
+      "tag": "0004_social",
+      "breakpoints": true
+    }
+  ]
+}

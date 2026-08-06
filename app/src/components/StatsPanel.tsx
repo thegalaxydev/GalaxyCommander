@@ -5,7 +5,7 @@ import { CATEGORY_ICONS } from '../iconData'
 
 const CURVE_ICONS = ['1', '2', '3', '4', '5', '6']
 
-export function StatsPanel({ cards }: { cards: DeckCard[] }) {
+export function StatsPanel({ cards, size = 100 }: { cards: DeckCard[]; size?: number }) {
   const total = totalCards(cards)
   const curve = curveBuckets(cards)
   const maxCurve = Math.max(1, ...curve)
@@ -17,9 +17,9 @@ export function StatsPanel({ cards }: { cards: DeckCard[] }) {
   return (
     <div className="stats-panel">
       <div className="stats-count">
-        <strong>{total}</strong> / 100 Cards
+        <strong>{total}</strong> / {size} Cards
         <div className="stats-count-bar">
-          <div style={{ width: `${Math.min(100, total)}%` }} />
+          <div style={{ width: `${Math.min(100, (total / size) * 100)}%` }} />
         </div>
       </div>
 

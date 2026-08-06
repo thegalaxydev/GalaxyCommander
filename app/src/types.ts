@@ -25,6 +25,8 @@ export interface ScryCard {
   colors?: string[]
   color_identity: string[]
   keywords?: string[]
+  power?: string
+  toughness?: string
   image_uris?: ScryImageUris
   card_faces?: ScryCardFace[]
   prices: { usd: string | null; usd_foil?: string | null }
@@ -135,6 +137,15 @@ export interface BuildSettings {
   meta?: string[]
   mustInclude?: ScryCard[]
   neverInclude?: string[]
+  // Rulebreaker: the extra color chosen for a "one color of your choice" clause
+  // (Tolabow, Loch Rascal). Ignored unless the commander grants one.
+  splashColor?: string | null
+  // Rulebreaker: which colors the "any color identity" exceptions may pull from.
+  // Undefined or all five means unrestricted, as printed.
+  rulebreakerColors?: string[] | null
+  // Total cards including the commander(s). Only ever anything but 100 when a
+  // Rulebreaker commander lifts the maximum deck size (Whtz, the Bibliophile).
+  deckSize?: number
   // Scryfall-style filter fragments (e.g. `t:Legendary -t:Land`) applied to every
   // auto-added card. See deckRules.ts.
   rules?: string

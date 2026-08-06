@@ -1,0 +1,27 @@
+{
+  "name": "galaxy-commander-api",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "build": "tsc",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push"
+  },
+  "dependencies": {
+    "better-auth": "^1.2.8",
+    "drizzle-orm": "^0.44.2",
+    "obscenity": "^0.4.6",
+    "postgres": "^3.4.7",
+    "resend": "^4.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.3",
+    "drizzle-kit": "^0.31.1",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}

@@ -14,6 +14,7 @@ import { CommanderSearch } from './CommanderSearch'
 import { CardPicker } from './CardPicker'
 import { PartnerDiscovery } from './PartnerDiscovery'
 import { partnerMode, partnerSearchFilter, unionIdentity } from '../partner'
+import { WUBRG as ALL_COLORS, combineRulebreakers, splashOptions } from '../rulebreaker'
 import { fetchNamedCard, fetchRandomCommander } from '../scryfall'
 import { PERSONALITY_PRESETS } from '../personality'
 
@@ -47,6 +48,12 @@ interface Props {
   onNeverInclude: (cards: ScryCard[]) => void
   rules: string
   onRules: (rules: string) => void
+  splashColor: string | null
+  onSplashColor: (c: string | null) => void
+  rulebreakerColors: string[]
+  onRulebreakerColors: (colors: string[]) => void
+  deckSize: number
+  onDeckSize: (n: number) => void
   disabled: boolean
 }
 
@@ -147,6 +154,21 @@ export function Sidebar(props: Props) {
   }
   const mode = props.commander ? partnerMode(props.commander) : null
   const identity = props.commander ? unionIdentity(props.commander, props.partner) : undefined
+  const rulebreaker = props.commander
+    ? combineRulebreakers(props.commander, props.partner)
+    : null
+  // Only "any color identity" grants are narrowable; a splash grant already has
+  // its own single-color picker, and the land clauses have no color to choose.
+  const anyColorGrants = rulebreaker?.grants.filter((g) => g.scope === 'any') ?? []
+  const offColors = identity ? ALL_COLORS.filter((c) => !identity.includes(c)) : []
+  const identityName = identity?.length ? identity.join('') : 'colorless'
+  const toggleRulebreakerColor = (c: string) => {
+    const on = props.rulebreakerColors.includes(c)
+    const next = on
+      ? props.rulebreakerColors.filter((x) => x !== c)
+      : [...props.rulebreakerColors, c]
+    props.onRulebreakerColors(ALL_COLORS.filter((x) => next.includes(x)))
+  }
   const [themeTip, setThemeTip] = useState<{ text: string; x: number; y: number } | null>(null)
 
   const showThemeTip = (theme: string, e: React.MouseEvent) => {
@@ -269,6 +291,89 @@ export function Sidebar(props: Props) {
                       : 'Search partner...'
               }
             />
+          )}
+        </section>
+      )}
+
+      {rulebreaker && (
+        <section className="rulebreaker">
+          <h2>Rulebreaker</h2>
+          {rulebreaker.text.map((line) => (
+            <p key={line} className="rulebreaker-text">
+              {line}
+            </p>
+          ))}
+          {rulebreaker.needsSplashColor && identity && (
+            <>
+              <h3 className="rule-head">Splash Color</h3>
+              <div className="color-filter" role="group" aria-label="Rulebreaker splash color">
+                {splashOptions(identity).map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`color-pip ${props.splashColor === c ? 'active' : ''}`}
+                    onClick={() => props.onSplashColor(props.splashColor === c ? null : c)}
+                    aria-pressed={props.splashColor === c}
+                  >
+                    <i className={`ms ms-${c.toLowerCase()} ms-cost`} />
+                  </button>
+                ))}
+              </div>
+              {!props.splashColor && (
+                <p className="hint">
+                  Pick a color to unlock it for {rulebreaker.grants[0]?.label ?? 'the exempt cards'}.
+                </p>
+              )}
+            </>
+          )}
+          {anyColorGrants.length > 0 && identity && (
+            <>
+              <h3 className="rule-head">Off-Color Cards</h3>
+              <div className="color-filter" role="group" aria-label="Rulebreaker off-colors">
+                {offColors.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`color-pip ${props.rulebreakerColors.includes(c) ? 'active' : ''}`}
+                    onClick={() => toggleRulebreakerColor(c)}
+                    aria-pressed={props.rulebreakerColors.includes(c)}
+                  >
+                    <i className={`ms ms-${c.toLowerCase()} ms-cost`} />
+                  </button>
+                ))}
+              </div>
+              <p className="hint">
+                {offColors.every((c) => props.rulebreakerColors.includes(c))
+                  ? `Any color of ${anyColorGrants[0].label} can be included, as printed.`
+                  : offColors.some((c) => props.rulebreakerColors.includes(c))
+                    ? `Only these colors of ${anyColorGrants[0].label} will be considered.`
+                    : `Off-color ${anyColorGrants[0].label} are switched off — the deck stays in ${identityName}.`}
+              </p>
+            </>
+          )}
+          {rulebreaker.noMaxDeckSize && (
+            <>
+              <h3 className="rule-head">Deck Size</h3>
+              <div className="deck-size-row">
+                <input
+                  type="range"
+                  min={100}
+                  max={400}
+                  step={10}
+                  value={props.deckSize}
+                  onChange={(e) => props.onDeckSize(Number(e.target.value))}
+                />
+                <input
+                  type="number"
+                  min={100}
+                  max={400}
+                  step={1}
+                  value={props.deckSize}
+                  onChange={(e) => props.onDeckSize(Number(e.target.value))}
+                />
+              </div>
+              <p className="hint">This commander removes the 100-card maximum.</p>
+            </>
           )}
         </section>
       )}
@@ -479,6 +584,11 @@ export function Sidebar(props: Props) {
             <CardPicker
               placeholder="Search a card to pin..."
               identity={identity}
+              rulebreaker={rulebreaker}
+              rulebreakerChoices={{
+                splash: props.splashColor,
+                colors: props.rulebreakerColors,
+              }}
               exclude={props.mustInclude.map((c) => c.name)}
               onPick={(card) => props.onMustInclude([...props.mustInclude, card])}
             />

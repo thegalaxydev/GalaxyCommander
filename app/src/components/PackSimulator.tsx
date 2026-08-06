@@ -26,6 +26,7 @@ import type {
 } from '../packs/types'
 import { FindCommander } from './FindCommander'
 import { PackAchievements } from './PackAchievements'
+import { combineRulebreakers, rulebreakerAllows } from '../rulebreaker'
 import { PackCollection } from './PackCollection'
 import { PackHistory } from './PackHistory'
 import { PackReveal } from './PackReveal'
@@ -220,11 +221,14 @@ export function PackSimulator({ onOpenInBuilder, onGenerateFor, disableCardPrevi
   }
 
   const buildFromPool = (commander: ScryCard, pool: ScryCard[]) => {
-    const identity = new Set(commander.color_identity ?? [])
+    const printed = commander.color_identity ?? []
+    const identity = new Set(printed)
+    const rulebreaker = combineRulebreakers(commander)
     const counts = new Map<string, number>()
     for (const card of pool) {
       if (card.id === commander.id) continue
-      if (!(card.color_identity ?? []).every((c) => identity.has(c))) continue
+      const inIdentity = (card.color_identity ?? []).every((c) => identity.has(c))
+      if (!inIdentity && !rulebreakerAllows(rulebreaker, card, printed)) continue
       const name = codCardName(card)
       counts.set(name, (counts.get(name) ?? 0) + 1)
     }
