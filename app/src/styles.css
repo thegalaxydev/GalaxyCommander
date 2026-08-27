@@ -272,6 +272,15 @@ button {
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
 }
 
+.search-syntax {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--accent-a);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
 .search-loading {
   padding: 12px;
   color: var(--text-dim);
@@ -5413,18 +5422,252 @@ html[data-reduced-motion='on'] .achievement-toast {
   color: var(--text-dim);
 }
 
-.sidebar section.rulebreaker .deck-size-row {
+
+/* The shared .slider-row sits inside .profile-list elsewhere, which supplies
+   its spacing; standing alone under a rule-head it needs its own. */
+.sidebar section.rulebreaker .slider-row {
+  margin-top: 6px;
+}
+
+/* The bracket badge deep-links to the combo on Commander Spellbook when the
+   variant id is known. Keeps the pill look — only the affordance is added. */
+.combo-bracket.is-link {
+  text-decoration: none;
+  cursor: pointer;
+  transition: filter 120ms ease, box-shadow 120ms ease;
+}
+
+.combo-bracket.is-link:hover,
+.combo-bracket.is-link:focus-visible {
+  filter: brightness(1.15);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text) 35%, transparent);
+}
+
+.combo-bracket.is-link::after {
+  content: ' ↗';
+  font-size: 0.9em;
+  opacity: 0.75;
+}
+
+/* A combo slot any qualifying card can fill ("Permanent that can be cast using
+   {C}"). Dashed to read as a placeholder rather than a specific card. */
+.combo-pieces .combo-template {
+  border-style: dashed;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* ---------------------------------------------------------------- printings */
+
+.printing-modal {
+  width: min(1040px, 100%);
+  max-height: min(90vh, 860px);
+  padding-bottom: 8px;
+}
+
+.printing-filter {
+  width: calc(100% - 36px);
+  margin: 14px 18px 4px;
+}
+
+.printing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  padding: 14px 18px 18px;
+}
+
+.printing-option {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-dim);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s ease, transform 0.12s ease;
+}
+
+.printing-option:hover {
+  border-color: var(--accent-a);
+  transform: translateY(-2px);
+}
+
+.printing-option.current {
+  border-color: var(--accent-a);
+  box-shadow: 0 0 0 1px var(--accent-a) inset;
+}
+
+.printing-option img {
+  width: 100%;
+  border-radius: 7px;
+  display: block;
+  aspect-ratio: 488 / 680;
+  object-fit: cover;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.printing-set {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.printing-name,
+.printing-note,
+.printing-price {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.printing-note {
+  color: var(--accent-a);
+}
+
+.art-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.12s ease;
+}
+
+.deck-row:hover .art-btn,
+.art-btn:hover {
+  opacity: 1;
+}
+
+/* Preferred set priority list (generator sidebar) */
+
+.set-priority-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.set-priority-list li {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
 }
 
-.sidebar section.rulebreaker .deck-size-row input[type='range'] {
+.set-priority-rank {
+  min-width: 16px;
+  text-align: center;
+  font-weight: 600;
+  color: var(--accent-a);
+}
+
+.set-priority-list .set-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.set-priority-name {
   flex: 1;
-  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.sidebar section.rulebreaker .deck-size-row input[type='number'] {
-  width: 68px;
-  flex: none;
+.set-priority-code {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.set-priority-list button {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-dim);
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.set-priority-list button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent-a);
+}
+
+.set-priority-list button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Copies stepper on a Must Include chip */
+
+.pin-qty {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0 2px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.pin-qty input {
+  width: 20px;
+  padding: 0;
+  border: none;
+  border-bottom: 1px dashed transparent;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--text);
+  -moz-appearance: textfield;
+}
+
+.pin-qty input:hover {
+  border-bottom-color: var(--border);
+}
+
+.pin-qty input:focus {
+  outline: none;
+  border-bottom-color: var(--accent-a);
+}
+
+.pin-qty.illegal input {
+  color: rgb(240, 186, 138);
+}
+
+.pin-warn {
+  font-size: 10px;
+  line-height: 1;
+  color: rgb(240, 186, 138);
+}
+
+.pin-qty button {
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.pin-qty button:disabled {
+  opacity: 0.3;
+  cursor: default;
 }

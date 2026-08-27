@@ -19,7 +19,7 @@ No API keys are required for deck generation — all card data comes from free p
 - **Bracket** (1–5: Exhibition → cEDH) and **Budget** tiers (Any / $ / $$ / $$$) shape power level and price ceilings.
 - **Power Profile sliders**: Ramp, Interaction, Card Draw, Combo Focus, Tutor Density, and Resiliency fine-tune the build within its bracket.
 - **Expected Meta**: tell the generator your table skews aggro / midrange / combo / battlecruiser / stax and it packs the matching tech (extra wipes, counterspells, grave hate, artifact hate).
-- **Card Rules**: pin must-include pet cards and ban never-include cards before generating.
+- **Card Rules**: pin must-include pet cards (with a copy count), ban never-include cards, and constrain the whole build with a **Scryfall query**. The full [search syntax](https://scryfall.com/docs/syntax) is supported — `year<=1995`, `t:legendary -t:land`, `(c:w or c:u) mv<=3`, `o:/^{T}:/`, `f:premodern`, `usd<5`, `is:vanilla` — evaluated locally against every candidate, with anything only Scryfall can answer (`otag:`, `cube:`, `is:fetchland`, print history) resolved by querying Scryfall directly.
 - **Colorless-aware**: cards that only tap for "any color in your commander's color identity" (Arcane Signet, Command Tower, etc.) are excluded from colorless commanders, where they would produce no mana.
 
 ### Commanders & partners
@@ -55,9 +55,15 @@ No API keys are required for deck generation — all card data comes from free p
 - **Deck Builder** tab: build decks by hand with card search, quantity controls, and a commander zone.
 - Decks are stored in Cockatrice `.cod` format with import/export; generated decks can be saved to the builder or exported as `.cod` directly (native save dialog in the desktop build).
 
+### Card art & printings
+
+- **Pick a printing per card**: the 🎨 button on any row in the generated decklist or the Deck Builder opens an art picker showing every printing of that card, filterable by set name, code, or collector number, with showcase / borderless / extended-art badges and per-printing prices. The chosen printing replaces the card everywhere — preview art, price, and exports.
+- **Preferred Sets**: a priority list in the generator sidebar. Once a deck is built, every card is re-printed from the highest set on the list that has it, falling through to the next. It is purely cosmetic — it runs after card selection, budget, and combo pruning, so it never changes *which* cards the deck gets. The Deck Builder gets a matching **Apply sets** button for hand-built lists.
+- **Exports carry the printing**: `.cod` files gain `setShortName` / `collectorNumber` on each `<card>`, so Cockatrice loads the exact art you picked; `.txt` exports use the `1 Sol Ring (LTC) 264` form that Moxfield, Archidekt, and MTGA all read. Printings also survive share links, permalinks, and saved decks, and are read back on import. Settings → General → *Pin card printings in exports* turns the whole thing off for name-only exports.
+
 ### Settings & appearance
 
-- **Settings** menu (top-right): LLM configuration, General options (remember generator defaults, disable card previews, allow illegal / un-set gray-border cards), Playtest simulation iterations, and Data tools (export or clear saved decks).
+- **Settings** menu (top-right): LLM configuration, General options (remember generator defaults, disable card previews, pin card printings in exports, allow illegal / un-set gray-border cards), Playtest simulation iterations, and Data tools (export or clear saved decks).
 - **Appearance**: UI presets, accent modes (including accents themed to the commander's color identity), starfield toggle, and reduced-motion mode, all with live preview.
 
 ## Running in the browser

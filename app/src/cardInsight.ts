@@ -56,8 +56,17 @@ export function buildCardInsight(deck: Deck, d: DeckCard): CardInsight {
   if (profile) {
     if (d.category === 'Ramp' && profile.ramp >= 60) bullets.push('Fits your high ramp priority.')
     if (d.category === 'Card Draw' && profile.draw >= 60) bullets.push('Fits your high draw priority.')
-    if ((d.category === 'Removal' || d.category === 'Board Wipes') && profile.interaction >= 60) {
+    if (
+      (d.category === 'Removal' || d.category === 'Counterspells' || d.category === 'Board Wipes') &&
+      profile.interaction >= 60
+    ) {
       bullets.push('Boosts interaction density from your profile.')
+    }
+    if (d.category === 'Tutors' && profile.tutors >= 60) {
+      bullets.push('Fits your high tutor priority.')
+    }
+    if ((d.category === 'Protection' || d.category === 'Recursion') && profile.resiliency >= 60) {
+      bullets.push('Adds resilience, matching your profile.')
     }
   }
 

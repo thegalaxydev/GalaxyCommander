@@ -2,7 +2,15 @@ import { useEffect, useRef, useState } from 'react'
 import type { ComboInfo, Deck, DeckCard, ScryCard, UpgradeTier } from '../types'
 import { CATEGORY_ORDER } from '../types'
 import { cardImage, cardImageByName, cardPrice } from '../scryfall'
-import { analyzeDeck, avgCmc, comboTagInfo, deckHealth, estimateBracket } from '../analysis'
+import {
+  analyzeDeck,
+  avgCmc,
+  comboSize,
+  comboTagInfo,
+  deckHealth,
+  estimateBracket,
+  isGameEndingCombo,
+} from '../analysis'
 import type { AppSettings } from '../settings'
 import {
   generateOverview,
@@ -13,6 +21,8 @@ import {
 import { ManaCost } from './ManaCost'
 import { PlaytestPanel } from './PlaytestPanel'
 import { CardDetailPanel } from './CardDetailPanel'
+import { PrintingPicker } from './PrintingPicker'
+import { printingLabel } from '../printings'
 import { SvgIcon } from './Icons'
 import { CATEGORY_ICONS, identityInfo } from '../iconData'
 import { unionIdentity } from '../partner'
@@ -32,6 +42,8 @@ interface Props {
   simIterations: number
   disableCardPreviews: boolean
   settings: AppSettings
+  /** Swap one card to a different printing. Omit to hide the art picker. */
+  onPrinting?: (card: DeckCard, printing: ScryCard) => void
 }
 
 type AiState<T> = {
@@ -69,8 +81,10 @@ export function DeckView({
   simIterations,
   disableCardPreviews,
   settings,
+  onPrinting,
 }: Props) {
   const [tab, setTab] = useState<Tab>('Overview')
+  const [artFor, setArtFor] = useState<DeckCard | null>(null)
   const [hover, setHover] = useState<Hover | null>(null)
   const [selected, setSelected] = useState<DeckCard | null>(null)
   const [aiOverview, setAiOverview] = useState<AiState<string>>({ status: 'idle', data: null })
@@ -149,6 +163,7 @@ export function DeckView({
             onSelect={setSelected}
             onHover={showHover}
             onLeave={() => setHover(null)}
+            onArt={onPrinting ? setArtFor : undefined}
           />
         )}
         {tab === 'Combos' && (
@@ -190,6 +205,17 @@ export function DeckView({
       )}
       {selected && tab === 'Decklist' && (
         <CardDetailPanel deck={deck} card={selected} onClose={() => setSelected(null)} />
+      )}
+      {artFor && onPrinting && (
+        <PrintingPicker
+          key={artFor.card.id}
+          card={artFor.card}
+          onClose={() => setArtFor(null)}
+          onPick={(printing) => {
+            onPrinting(artFor, printing)
+            setArtFor(null)
+          }}
+        />
       )}
     </div>
   )
@@ -343,12 +369,14 @@ function Decklist({
   onSelect,
   onHover,
   onLeave,
+  onArt,
 }: {
   deck: Deck
   selected: DeckCard | null
   onSelect: (card: DeckCard | null) => void
   onHover: (card: ScryCard, e: React.MouseEvent) => void
   onLeave: () => void
+  onArt?: (card: DeckCard) => void
 }) {
   const gameChangers = deck.cards.filter((d) => d.card.game_changer)
   const gcNames = new Set(gameChangers.map((d) => d.card.name))
@@ -383,12 +411,27 @@ function Decklist({
       <span className="deck-price">
         {cardPrice(d.card) > 0 ? `$${cardPrice(d.card).toFixed(2)}` : ''}
       </span>
+      {onArt && (
+        <button
+          type="button"
+          className="art-btn"
+          title={`Choose printing — currently ${printingLabel(d.card) || 'default'}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            onArt(d)
+          }}
+        >
+          🎨
+        </button>
+      )}
     </div>
   )
 
   return (
     <div className="decklist">
-      <p className="hint decklist-hint">Click a card to see why it was included.</p>
+      <p className="hint decklist-hint">
+        Click a card to see why it was included{onArt ? ', or 🎨 to pick a different printing' : ''}.
+      </p>
       <div className="decklist-cols">
         {gameChangers.length > 0 && (
           <section className="deck-group game-changers">
@@ -427,11 +470,6 @@ function Decklist({
   )
 }
 
-function isGameEndingCombo(c: ComboInfo): boolean {
-  const text = `${c.produces.join(' ')} ${c.description}`.toLowerCase()
-  return /infinite|win the game|each opponent loses|wins? the game/.test(text)
-}
-
 function Combos({
   combos,
   loading,
@@ -454,7 +492,7 @@ function Combos({
       </p>
     )
   const illegalCombos =
-    bracket <= 3 ? combos.included.filter((c) => c.cards.length <= 2 && isGameEndingCombo(c)) : []
+    bracket <= 3 ? combos.included.filter((c) => comboSize(c) <= 2 && isGameEndingCombo(c)) : []
   return (
     <div className="combos">
       {illegalCombos.length > 0 && (
@@ -489,16 +527,28 @@ function ComboCard({
   return (
     <div className="combo-card">
       <span className="combo-badges">
-        <span className="combo-count">{combo.cards.length}-card</span>
-        {tag && (
-          <span
-            className={`combo-bracket bracket-${tag.code}`}
-            title={`Commander Spellbook bracket tag: ${tag.name}`}
-          >
-            {tag.name}
-            {tag.code === 'B' ? '' : ` · Bracket ${tag.bracket}+`}
-          </span>
-        )}
+        <span className="combo-count">{comboSize(combo)}-card</span>
+        {tag &&
+          (combo.id ? (
+            <a
+              className={`combo-bracket bracket-${tag.code} is-link`}
+              href={`https://commanderspellbook.com/combo/${combo.id}/`}
+              target="_blank"
+              rel="noreferrer"
+              title={`Spellbook bracket tag: ${tag.name} — open this combo on Commander Spellbook`}
+            >
+              {tag.name}
+              {tag.code === 'B' ? '' : ` · Bracket ${tag.bracket}+`}
+            </a>
+          ) : (
+            <span
+              className={`combo-bracket bracket-${tag.code}`}
+              title={`Commander Spellbook bracket tag: ${tag.name}`}
+            >
+              {tag.name}
+              {tag.code === 'B' ? '' : ` · Bracket ${tag.bracket}+`}
+            </span>
+          ))}
       </span>
       <div className="combo-pieces">
         {combo.cards.map((name) => (
@@ -509,6 +559,16 @@ function ComboCard({
             onMouseLeave={onLeave}
           >
             {name}
+          </span>
+        ))}
+        {(combo.requires ?? []).map((req) => (
+          <span
+            key={req.name}
+            className="combo-template"
+            title="Any card matching this fills the slot"
+          >
+            {req.quantity > 1 ? `${req.quantity}x ` : ''}
+            {req.name}
           </span>
         ))}
       </div>

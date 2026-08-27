@@ -11,7 +11,7 @@ import type {
   UpgradeSwap,
 } from './types'
 import { DEFAULT_BUDGET_CAPS, DEFAULT_PROFILE } from './types'
-import { searchCards, cardOracle, cardPrice, cardManaCost, legalOrUpcoming } from './scryfall'
+import { SCRY_BASE, searchCards, cardOracle, cardPrice, cardManaCost, legalOrUpcoming } from './scryfall'
 import { commanderSlug, fetchEdhrecPageBySlug, resolveCards, type EdhrecRec, type EdhrecPage } from './edhrec'
 import { themeQuery, TAG_QUERIES, detectTribe } from './themes'
 import { unionIdentity } from './partner'
@@ -25,9 +25,11 @@ import {
   type RulebreakerMode,
 } from './rulebreaker'
 import { finalScore, rankInclusion, resolveWeights } from './scoring'
+import { categorize, isTutor } from './categorize'
 import { estimateBracketFromCards, isMassLandDenial, comboMinBracket } from './analysis'
 import { findCombos } from './combos'
-import { rulesToQuery, cardMatchesRules } from './deckRules'
+import { rulesToQuery, cardMatchesRules, resolveRuleWhitelist } from './deckRules'
+import { applyPreferredPrintings } from './printings'
 
 export type ProgressFn = (stepIndex: number, cards: DeckCard[]) => void
 
@@ -94,13 +96,20 @@ function choicesOf(settings: BuildSettings): RulebreakerChoices {
 /** Commander decks are exactly 100 cards unless a Rulebreaker clause says otherwise. */
 export const DEFAULT_DECK_SIZE = 100
 
+/**
+ * Ceiling for a "no maximum deck size" commander. Not a rules number — the card
+ * really has no limit — but the generator fetches every card it considers, so
+ * the build has to stop somewhere.
+ */
+export const MAX_DECK_SIZE = 1000
+
 export function resolveDeckSize(settings: BuildSettings, ctx?: DeckIdentity): number {
   const idCtx = ctx ?? deckIdentity(settings.commander, settings.partner, choicesOf(settings))
   if (!idCtx.rulebreaker?.noMaxDeckSize) return DEFAULT_DECK_SIZE
   const requested = settings.deckSize ?? DEFAULT_DECK_SIZE
   // "No maximum" still has a minimum, and an unbounded upper end is a footgun
   // for a generator that fetches every card it considers.
-  return Math.min(400, Math.max(DEFAULT_DECK_SIZE, Math.round(requested)))
+  return Math.min(MAX_DECK_SIZE, Math.max(DEFAULT_DECK_SIZE, Math.round(requested)))
 }
 
 function deckIdentityOf(deck: Deck): DeckIdentity {
@@ -226,103 +235,14 @@ function isManaRock(card: ScryCard): boolean {
 function isLandRamp(card: ScryCard): boolean {
   const text = cardOracle(card)
   return (
-    /search your library for[^.]*\bland/i.test(text) &&
+    /search your library for[^.]*\b(?:land|plains|island|swamp|mountain|forest|wastes|gate)/i.test(text) &&
     /onto the battlefield|into play/i.test(text)
   )
 }
 
-// A board wipe has to actually *remove* a board. Matching bare "each creature"
-// swept up every anthem and counter-doubler (Bristly Bill, Spine Sower reads
-// "Double the number of +1/+1 counters on each creature you control"), so each
-// alternative below pairs a mass quantifier with a destructive verb.
-//
-// Two kinds of near-miss are filtered out rather than matched:
-//  - combat-scoped effects ("destroy all creatures blocking it"), which read
-//    like a wipe but only ever hit the creatures in one combat;
-//  - self-sacrifice combos ("sacrifice all creatures you control, then create
-//    that many tokens"), which are engine pieces, not removal.
-const COMBAT_SCOPED = /\b(?:blocking|blocked by|becomes blocked)\b/i
-const SELF_SACRIFICE = /\b(?:sacrifice|exile)\s+(?:all|each)\s+creatures?\s+you\s+control\b/i
-
-// Amounts are written as digits or as X, and the mass noun often carries a
-// qualifier ("each non-Dragon creature", "each creature with flying").
-const N = String.raw`(?:\d+|X)`
-const EACH_CREATURE = String.raw`each\s+(?:\w+[- ]){0,3}creature`
-const MINUS = '[-−]'
-
-const BOARD_WIPE_PATTERNS: RegExp[] = [
-  // Destroy/exile all or each creature — the classic wrath.
-  /\b(?:destroy|exile)\s+(?:all|each)\b/i,
-  // Mass bounce and mass tuck count too (Aetherize, Evacuation, Coastal Breach).
-  /\breturn\s+all\s+[^.]*(?:creatures?|permanents)\b/i,
-  // -X/-Y sweepers, but only when toughness actually drops; "-1/-0" is a
-  // combat trick (Bone Flute), not a wipe.
-  new RegExp(String.raw`\b(?:all|each)\s+(?:other\s+)?creatures?\s+gets?\s+${MINUS}${N}\/${MINUS}(?:[1-9]|X)`, 'i'),
-  new RegExp(
-    String.raw`\bcreatures?\s+(?:your opponents?|target player|each player|they)[^.]*?gets?\s+${MINUS}${N}\/${MINUS}(?:[1-9]|X)`,
-    'i'
-  ),
-  // -1/-1 counters spread across the board (Black Sun's Zenith).
-  new RegExp(String.raw`${MINUS}1\/${MINUS}1\s+counters?\s+on\s+${EACH_CREATURE}`, 'i'),
-  // Mass damage. The amount is often split across a sentence that hits a player
-  // first ("deals X damage to target player and each creature that player
-  // controls"), so the damage clause and the mass noun are matched separately.
-  new RegExp(String.raw`\b${N}\s+damage\s+to\s+[^.]*?${EACH_CREATURE}`, 'i'),
-  new RegExp(String.raw`deals?\s+damage\s+equal[^.]*?to\s+[^.]*?${EACH_CREATURE}`, 'i'),
-  // Mass sacrifice, including the "keep N, sacrifice the rest" template.
-  /\beach\s+player\s+sacrifices\b/i,
-  /\bsacrifices?\s+all\b/i,
-  /\bsacrifices?\s+the\s+rest\b/i,
-]
-
-function isBoardWipe(text: string): boolean {
-  return BOARD_WIPE_PATTERNS.some((re) => {
-    const match = text.match(re)
-    if (!match) return false
-    // Judge the sentence the match landed in, not the whole card.
-    const start = text.lastIndexOf('.', match.index ?? 0) + 1
-    const end = text.indexOf('.', (match.index ?? 0) + match[0].length)
-    const sentence = text.slice(start, end === -1 ? undefined : end)
-    return !COMBAT_SCOPED.test(sentence) && !SELF_SACRIFICE.test(sentence)
-  })
-}
-
-export function categorize(card: ScryCard): Category {
-  const type = card.type_line ?? ''
-  const text = cardOracle(card)
-  if (/\bLand\b/.test(type.split('//')[0])) return 'Lands'
-  if (
-    card.cmc <= 4 &&
-    (/{T}: Add|adds? (one|two|three) mana|{T}, Sacrifice .*: Add/i.test(text) ||
-      /search your library for (a|up to two|up to three) (basic )?lands?/i.test(text))
-  )
-    return 'Ramp'
-  // Checked ahead of card draw so a wrath that cantrips is still a wrath.
-  if (isBoardWipe(text)) return 'Board Wipes'
-  if (/draw (a card|two cards|three cards|x cards|that many cards|cards equal)/i.test(text) && card.cmc <= 5)
-    return 'Card Draw'
-  if (
-    /destroy target|exile target|counter target|deals? \d+ damage to any target|deals? damage equal .* to target|fight target/i.test(
-      text
-    )
-  )
-    return 'Removal'
-  const pow = parseInt(card.power ?? '0', 10)
-  if (
-    pow >= 6 ||
-    /wins? the game|loses? the game|take an extra turn|double strike.*trample|combat damage to a player, /i.test(text)
-  )
-    return 'Finishers'
-  return 'Synergy'
-}
-
-function isTutor(card: ScryCard): boolean {
-  const text = cardOracle(card)
-  return (
-    /search your library for a/i.test(text) &&
-    !/search your library for (a|up to \w+) (basic )?lands?/i.test(text)
-  )
-}
+// categorize() and the role detectors live in categorize.ts; re-exported here
+// so existing imports (components, scripts) keep working.
+export { categorize, cardRoles } from './categorize'
 
 const COMBO_HINTS = /untap (all|target|each)|copy target|infinite|whenever .* untaps|opponents? can't|extra combat/i
 function isComboPiece(card: ScryCard): boolean {
@@ -427,7 +347,6 @@ function buildTargets(settings: BuildSettings, profile: PowerProfile): Targets {
 }
 
 interface TechPackage {
-  category: Category
   query: string
   reason: string
   need: number
@@ -437,7 +356,6 @@ function metaTechPackages(meta: string[]): TechPackage[] {
   const packs: TechPackage[] = []
   if (meta.includes('Aggro-heavy')) {
     packs.push({
-      category: 'Board Wipes',
       query: '(o:"destroy all creatures" or o:"deals damage to each creature" or o:"all creatures get -")',
       reason: 'Meta answer for aggro-heavy tables.',
       need: 6,
@@ -445,13 +363,11 @@ function metaTechPackages(meta: string[]): TechPackage[] {
   }
   if (meta.includes('Combo-heavy')) {
     packs.push({
-      category: 'Removal',
       query: '(o:"counter target spell" or o:"can\'t cast spells" or o:"opponents can\'t cast")',
       reason: 'Stack interaction for combo-heavy tables.',
       need: 6,
     })
     packs.push({
-      category: 'Removal',
       query: '(o:exile (o:"graveyard" or o:"graveyards")) mv<=3',
       reason: 'Graveyard hate for combo-heavy tables.',
       need: 4,
@@ -459,7 +375,6 @@ function metaTechPackages(meta: string[]): TechPackage[] {
   }
   if (meta.includes('Midrange-heavy')) {
     packs.push({
-      category: 'Synergy',
       query: '(o:"whenever" o:"draw a card") -t:land',
       reason: 'Grindy value engine for midrange-heavy tables.',
       need: 5,
@@ -467,7 +382,6 @@ function metaTechPackages(meta: string[]): TechPackage[] {
   }
   if (meta.includes('Stax-heavy')) {
     packs.push({
-      category: 'Removal',
       query: '(o:"destroy target artifact" or o:"destroy target enchantment" or o:"artifact or enchantment")',
       reason: 'Artifact and enchantment hate for stax-heavy tables.',
       need: 6,
@@ -480,7 +394,6 @@ function profileTechPackages(profile: PowerProfile, options: BuildSettings['opti
   const packs: TechPackage[] = []
   if (profile.tutors >= 60 && !options.avoidTutors) {
     packs.push({
-      category: 'Synergy',
       query: 'o:"search your library for a card" mv<=4',
       reason: 'Tutor density boost from your power profile.',
       need: Math.round((profile.tutors - 50) / 12),
@@ -488,7 +401,6 @@ function profileTechPackages(profile: PowerProfile, options: BuildSettings['opti
   }
   if (profile.combo >= 60 && !options.avoidCombos) {
     packs.push({
-      category: 'Synergy',
       query: '(o:"untap all" or o:"untap target permanent" or o:"copy target spell" or o:"storm")',
       reason: 'Combo enabler from your power profile.',
       need: Math.round((profile.combo - 50) / 12),
@@ -496,7 +408,6 @@ function profileTechPackages(profile: PowerProfile, options: BuildSettings['opti
   }
   if (profile.resiliency >= 60) {
     packs.push({
-      category: 'Synergy',
       query: '(o:hexproof or o:indestructible or o:ward or o:"can\'t be countered" or o:"return target creature card from your graveyard to the battlefield")',
       reason: 'Protection package from your resiliency setting.',
       need: Math.round((profile.resiliency - 50) / 12),
@@ -504,6 +415,28 @@ function profileTechPackages(profile: PowerProfile, options: BuildSettings['opti
   }
   return packs
 }
+
+// The generator budgets slots for six functional roles (buildTargets), but the
+// classifier is finer-grained than that. SLOT_CATS maps each budgeted slot to
+// the categories that can fill it — counterspells are interaction and compete
+// for removal slots — and FLEX_CATS are the utility roles that fill the
+// remaining space alongside Synergy, purely by score.
+const SLOT_CATS = {
+  ramp: ['Ramp'] as Category[],
+  draw: ['Card Draw'] as Category[],
+  removal: ['Removal', 'Counterspells'] as Category[],
+  wipes: ['Board Wipes'] as Category[],
+  finishers: ['Finishers'] as Category[],
+}
+const FLEX_CATS: Category[] = [
+  'Synergy',
+  'Tokens',
+  'Recursion',
+  'Protection',
+  'Tutors',
+  'Graveyard Hate',
+  'Stax',
+]
 
 function gameChangerTarget(bracket: number): number {
   if (bracket <= 2) return 0
@@ -551,22 +484,49 @@ export async function generateDeck(
   const used = new Set<string>(commanderNames)
 
   let mustLands = 0
-  for (const card of settings.mustInclude ?? []) {
+  for (const pin of settings.mustInclude ?? []) {
+    const card = pin.card
     if (used.has(card.name) || !fitsIdentity(card, idCtx)) continue
     const cat = categorize(card)
+    // Every copy takes a slot, so the category targets come down by the count,
+    // not by one — otherwise a 4-of pin pushes the deck over its size. The count
+    // itself is only bounded by the largest deck we'd ever build.
+    const qty = Math.max(1, Math.min(MAX_DECK_SIZE, Math.round(pin.qty || 1)))
     used.add(card.name)
-    deck.push({ card, category: cat, qty: 1, reason: 'Pinned by you as a must-include.' })
-    if (cat === 'Lands') mustLands++
-    else if (cat === 'Ramp') targets.ramp = Math.max(0, targets.ramp - 1)
-    else if (cat === 'Card Draw') targets.draw = Math.max(0, targets.draw - 1)
-    else if (cat === 'Removal') targets.removal = Math.max(0, targets.removal - 1)
-    else if (cat === 'Board Wipes') targets.wipes = Math.max(0, targets.wipes - 1)
-    else if (cat === 'Finishers') targets.finishers = Math.max(0, targets.finishers - 1)
+    deck.push({
+      card,
+      category: cat,
+      qty,
+      reason:
+        qty > 1
+          ? `Pinned by you as a must-include (${qty} copies).`
+          : 'Pinned by you as a must-include.',
+    })
+    if (cat === 'Lands') mustLands += qty
+    else if (cat === 'Ramp') targets.ramp = Math.max(0, targets.ramp - qty)
+    else if (cat === 'Card Draw') targets.draw = Math.max(0, targets.draw - qty)
+    else if (cat === 'Removal') targets.removal = Math.max(0, targets.removal - qty)
+    else if (cat === 'Board Wipes') targets.wipes = Math.max(0, targets.wipes - qty)
+    else if (cat === 'Finishers') targets.finishers = Math.max(0, targets.finishers - qty)
   }
 
+  // Everything that isn't a land has to fit in this many slots.
+  const nonLandBudget = deckSize - commanderNames.length - targets.lands
+  const nonLandCount = () =>
+    deck
+      .filter((d) => d.category !== 'Commander' && d.category !== 'Lands')
+      .reduce((n, d) => n + d.qty, 0)
+
   const gcTarget = gameChangerTarget(settings.bracket)
-  const gcAlready = deck.filter((d) => d.category !== 'Commander' && d.card.game_changer).length
-  let gcNeed = Math.max(0, gcTarget - gcAlready)
+  const gcAlready = deck
+    .filter((d) => d.category !== 'Commander' && d.card.game_changer)
+    .reduce((n, d) => n + d.qty, 0)
+  // A big enough pin can leave no room for the bracket's Game Changers. Adding
+  // them anyway would push the deck past its size.
+  let gcNeed = Math.min(
+    Math.max(0, gcTarget - gcAlready),
+    Math.max(0, nonLandBudget - nonLandCount())
+  )
   if (gcNeed > 0) {
     const priceClause = cap === Infinity ? '' : `usd<=${cap}`
     const gcPool = await searchCards(
@@ -583,6 +543,7 @@ export async function generateDeck(
       if (colorless && deadInColorless(card)) continue
       if (avoidTutorsEffective && isTutor(card)) continue
       if (avoidCombosEffective && settings.bracket <= 3 && isComboPiece(card)) continue
+      if (settings.bracket <= 3 && isMassLandDenial(card)) continue
       const cat = categorize(card)
       used.add(card.name)
       deck.push({
@@ -599,6 +560,18 @@ export async function generateDeck(
       else if (cat === 'Board Wipes') targets.wipes = Math.max(0, targets.wipes - 1)
       else if (cat === 'Finishers') targets.finishers = Math.max(0, targets.finishers - 1)
     }
+  }
+
+  // Cards already committed — pins and Game Changers — have to come out of the
+  // fixed category quotas too, not just the flexible synergy budget. Without
+  // this the quota takes below are sized as if they weren't there, and a 60-copy
+  // pin produces a 132-card deck instead of a 100-card one.
+  const committedNonLand = nonLandCount()
+  const quotas: (keyof Targets)[] = ['ramp', 'draw', 'removal', 'wipes', 'finishers']
+  const quotaTotal = quotas.reduce((n, key) => n + targets[key], 0)
+  if (committedNonLand + quotaTotal > nonLandBudget && quotaTotal > 0) {
+    const scale = Math.max(0, nonLandBudget - committedNonLand) / quotaTotal
+    for (const key of quotas) targets[key] = Math.floor(targets[key] * scale)
   }
 
   onProgress(0, deck)
@@ -644,7 +617,21 @@ export async function generateDeck(
 
   const resolved = await resolveCards([...recMap.keys()])
 
+  // EDHREC recommendations are resolved by name and never pass through a Scryfall
+  // query, so Card Rules keywords the local evaluator can't model (otag:, cube:,
+  // in:, land-cycle shortcuts…) would silently do nothing to them. When the rules
+  // use one, ask Scryfall which cards actually qualify and filter against that.
+  // Null means Scryfall couldn't give a complete answer — local rules still apply.
+  const ruleWhitelist = await resolveRuleWhitelist(
+    settings.rules,
+    identityQuery(idCtx, commanderNames),
+    { base: SCRY_BASE }
+  )
+
   const pool = new Map<Category, Candidate[]>()
+  // Name → candidate across every pool, so boosts find a card wherever the
+  // classifier filed it.
+  const candByName = new Map<string, Candidate>()
   const addCandidate = (card: ScryCard, score: number, reason: string, cat?: Category) => {
     if (!isLegal(card, noSpoilers) || !fitsIdentity(card, idCtx)) return
     if (offColorFetchLand(card, manaColors)) return
@@ -653,6 +640,7 @@ export async function generateDeck(
     if (colorless && deadInColorless(card)) return
     if (neverSet.has(card.name.toLowerCase())) return
     if (!cardMatchesRules(card, settings.rules)) return
+    if (ruleWhitelist && !ruleWhitelist.has(card.name)) return
     if (cardPrice(card) > cap) return
     if (avoidTutorsEffective && isTutor(card)) return
     if (avoidCombosEffective && settings.bracket <= 3 && isComboPiece(card)) return
@@ -664,10 +652,12 @@ export async function generateDeck(
       else if (isManaRock(card)) adjScore -= 2
     }
     if (category === 'Lands') adjScore += landFixingScore(card, manaColors, cap)
+    if (candByName.has(card.name)) return
+    const cand = { card, score: adjScore, reason }
     const list = pool.get(category) ?? []
-    if (list.some((c) => c.card.name === card.name)) return
-    list.push({ card, score: adjScore, reason })
+    list.push(cand)
     pool.set(category, list)
+    candByName.set(card.name, cand)
   }
 
   const leadName = partner
@@ -713,26 +703,30 @@ export async function generateDeck(
       },
       weights
     )
+  // Tops up a slot's pools from Scryfall. Cards are filed by the classifier,
+  // not by which query found them — a counterspell surfaced by the removal
+  // query still lands in the Counterspells pool.
   const fillFromScryfall = async (
-    cat: Category,
+    cats: Category[],
     query: string,
     reason: string,
     need: number,
     isTheme = false
   ) => {
-    const have = pool.get(cat)?.length ?? 0
+    const have = cats.reduce((n, c) => n + (pool.get(c)?.length ?? 0), 0)
     if (have >= need) return
     const extra = await searchCards(`${base} ${query} usd<=${cap === Infinity ? 1000 : cap}`, {
       max: Math.min(60, (need - have) * 3),
     })
     for (const card of extra) {
+      const cat = categorize(card)
       addCandidate(card, scoreScry(card, cat, isTheme), reason, cat)
     }
   }
 
   onProgress(1, deck)
 
-  await fillFromScryfall('Lands', '-t:basic t:land', 'A strong land for this color identity.', 30)
+  await fillFromScryfall(['Lands'], '-t:basic t:land', 'A strong land for this color identity.', 30)
 
   // At unconstrained budget, explicitly add the original dual lands for these
   // colors. They have no drawback but low EDHREC inclusion (price), so they'd
@@ -765,10 +759,12 @@ export async function generateDeck(
     }
   }
 
-  const take = (cat: Category, count: number): DeckCard[] => {
-    const list = (pool.get(cat) ?? []).sort((a, b) => b.score - a.score)
+  const takeFrom = (cats: Category[], count: number): DeckCard[] => {
+    const merged = cats
+      .flatMap((cat) => (pool.get(cat) ?? []).map((cand) => ({ cand, cat })))
+      .sort((a, b) => b.cand.score - a.cand.score)
     const out: DeckCard[] = []
-    for (const cand of list) {
+    for (const { cand, cat } of merged) {
       if (out.length >= count) break
       if (used.has(cand.card.name)) continue
       used.add(cand.card.name)
@@ -781,14 +777,14 @@ export async function generateDeck(
     targets.lands - minBasics(manaColors),
     manaColors.length >= 3 ? 22 : 16
   )
-  const lands = take('Lands', Math.max(4, Math.max(8, utilityLandCount) - mustLands))
+  const lands = takeFrom(['Lands'], Math.max(4, Math.max(8, utilityLandCount) - mustLands))
   deck.push(...lands)
   onProgress(2, deck)
 
-  await fillFromScryfall('Ramp', '(o:"{T}: Add" or o:"search your library for a basic land") -t:land mv<=4', 'Mana acceleration to deploy threats ahead of schedule.', targets.ramp + 4)
-  await fillFromScryfall('Card Draw', 'o:"draw" o:"card" -t:land mv<=5', 'Card advantage to keep your hand full.', targets.draw + 4)
-  await fillFromScryfall('Removal', '(o:"destroy target" or o:"exile target") mv<=4', 'Interaction for opposing threats.', targets.removal + 3)
-  await fillFromScryfall('Board Wipes', '(o:"destroy all" or o:"exile all")', 'A reset button when the board gets out of hand.', targets.wipes + 2)
+  await fillFromScryfall(SLOT_CATS.ramp, '(o:"{T}: Add" or o:"search your library for a basic land") -t:land mv<=4', 'Mana acceleration to deploy threats ahead of schedule.', targets.ramp + 4)
+  await fillFromScryfall(SLOT_CATS.draw, 'o:"draw" o:"card" -t:land mv<=5', 'Card advantage to keep your hand full.', targets.draw + 4)
+  await fillFromScryfall(SLOT_CATS.removal, '(o:"destroy target" or o:"exile target" or o:"counter target spell") mv<=4', 'Interaction for opposing threats.', targets.removal + 3)
+  await fillFromScryfall(SLOT_CATS.wipes, '(o:"destroy all" or o:"exile all")', 'A reset button when the board gets out of hand.', targets.wipes + 2)
 
   const themeQueries: string[] = settings.themes.map((t) => themeQuery(t))
   for (const tag of settings.tags) {
@@ -799,7 +795,7 @@ export async function generateDeck(
     if (tribe) themeQueries.push(`t:${tribe.toLowerCase()}`)
   }
   for (const q of themeQueries.slice(0, 4)) {
-    await fillFromScryfall('Synergy', `${q} -t:land`, 'Directly supports your chosen theme.', 40, true)
+    await fillFromScryfall(FLEX_CATS, `${q} -t:land`, 'Directly supports your chosen theme.', 40, true)
   }
   if (settings.options.latestSets) {
     const fresh = await searchCards(`${base} -t:land year>=2024 usd<=${cap === Infinity ? 1000 : cap}`, {
@@ -812,7 +808,7 @@ export async function generateDeck(
       addCandidate(card, scoreScry(card, cat), 'A strong recent printing for this strategy.', cat)
     }
   }
-  await fillFromScryfall('Finishers', '(pow>=6 or o:"wins the game") t:creature', 'Closes out the game once you are ahead.', targets.finishers + 2)
+  await fillFromScryfall(SLOT_CATS.finishers, '(pow>=6 or o:"wins the game") t:creature', 'Closes out the game once you are ahead.', targets.finishers + 2)
 
   const techPackages = [
     ...metaTechPackages(settings.meta ?? []),
@@ -827,33 +823,41 @@ export async function generateDeck(
     let boosted = 0
     for (const card of tech) {
       if (boosted >= pack.need) break
-      const list = pool.get(pack.category) ?? []
-      const existing = list.find((c) => c.card.name === card.name)
+      const existing = candByName.get(card.name)
       if (existing) {
         existing.score += 0.6
         existing.reason = `${pack.reason} ${existing.reason}`
         boosted++
         continue
       }
-      const before = list.length
-      addCandidate(card, scoreScry(card, pack.category) + 0.6, pack.reason, pack.category)
-      if ((pool.get(pack.category)?.length ?? 0) > before) boosted++
+      const cat = categorize(card)
+      const before = pool.get(cat)?.length ?? 0
+      addCandidate(card, scoreScry(card, cat) + 0.6, pack.reason, cat)
+      if ((pool.get(cat)?.length ?? 0) > before) boosted++
     }
   }
 
-  deck.push(...take('Ramp', targets.ramp))
-  deck.push(...take('Card Draw', targets.draw))
-  deck.push(...take('Removal', targets.removal))
-  deck.push(...take('Board Wipes', targets.wipes))
-  deck.push(...take('Finishers', targets.finishers))
+  deck.push(...takeFrom(SLOT_CATS.ramp, targets.ramp))
+  deck.push(...takeFrom(SLOT_CATS.draw, targets.draw))
+  deck.push(...takeFrom(SLOT_CATS.removal, targets.removal))
+  deck.push(...takeFrom(SLOT_CATS.wipes, targets.wipes))
+  deck.push(...takeFrom(SLOT_CATS.finishers, targets.finishers))
   onProgress(3, deck)
 
   const nonLandSlots = deckSize - commanderNames.length - targets.lands
-  let remaining = nonLandSlots - deck.filter((d) => d.category !== 'Lands' && d.category !== 'Commander').length
+  let remaining =
+    nonLandSlots -
+    deck
+      .filter((d) => d.category !== 'Lands' && d.category !== 'Commander')
+      .reduce((n, d) => n + d.qty, 0)
   const maxExpensive = settings.tags.includes('Aggro') ? 6 : settings.bracket >= 4 ? 9 : 12
-  const synergyList = (pool.get('Synergy') ?? []).sort((a, b) => b.score - a.score)
-  let expensiveCount = deck.filter((d) => d.card.cmc >= 5 && d.category !== 'Lands').length
-  for (const cand of synergyList) {
+  const flexList = FLEX_CATS.flatMap((cat) =>
+    (pool.get(cat) ?? []).map((cand) => ({ cand, cat }))
+  ).sort((a, b) => b.cand.score - a.cand.score)
+  let expensiveCount = deck
+    .filter((d) => d.card.cmc >= 5 && d.category !== 'Lands')
+    .reduce((n, d) => n + d.qty, 0)
+  for (const { cand, cat } of flexList) {
     if (remaining <= 0) break
     if (used.has(cand.card.name)) continue
     if (cand.card.cmc >= 5) {
@@ -861,13 +865,13 @@ export async function generateDeck(
       expensiveCount++
     }
     used.add(cand.card.name)
-    deck.push({ card: cand.card, category: 'Synergy', qty: 1, reason: cand.reason })
+    deck.push({ card: cand.card, category: cat, qty: 1, reason: cand.reason })
     remaining--
   }
   if (remaining > 0) {
-    for (const cat of ['Ramp', 'Card Draw', 'Removal', 'Finishers'] as Category[]) {
+    for (const cats of [SLOT_CATS.ramp, SLOT_CATS.draw, SLOT_CATS.removal, SLOT_CATS.finishers]) {
       if (remaining <= 0) break
-      const extra = take(cat, remaining)
+      const extra = takeFrom(cats, remaining)
       deck.push(...extra)
       remaining -= extra.length
     }
@@ -886,6 +890,12 @@ export async function generateDeck(
       if (colorless && deadInColorless(card)) continue
       if (neverSet.has(card.name.toLowerCase())) continue
       if (respectRules && !cardMatchesRules(card, settings.rules)) continue
+      if (respectRules && ruleWhitelist && !ruleWhitelist.has(card.name)) continue
+      // The filler doesn't go through addCandidate, so the bracket rules have
+      // to be repeated here or a rules-relaxed top-up can smuggle them back in.
+      if (settings.bracket <= 3 && isMassLandDenial(card)) continue
+      if (avoidTutorsEffective && isTutor(card)) continue
+      if (avoidCombosEffective && settings.bracket <= 3 && isComboPiece(card)) continue
       used.add(card.name)
       deck.push({
         card,
@@ -918,9 +928,21 @@ export async function generateDeck(
   )
   deck.push(...basics)
 
-  const finalDeck = deck.filter(
-    (d, i) => deck.findIndex((x) => x.card.name === d.card.name) === i || /^(Snow-Covered )?(Plains|Island|Swamp|Mountain|Forest|Wastes)$/.test(d.card.name)
-  )
+  // Drop duplicate entries, except basics — a pinned count and the auto-filled
+  // mana base can each contribute the same basic, so those fold into one row
+  // rather than showing up twice in the decklist.
+  const finalDeck: DeckCard[] = []
+  const byName = new Map<string, DeckCard>()
+  for (const d of deck) {
+    const prev = byName.get(d.card.name)
+    if (!prev) {
+      const entry = { ...d }
+      byName.set(d.card.name, entry)
+      finalDeck.push(entry)
+    } else if (BASIC_NAMES.test(d.card.name)) {
+      prev.qty += d.qty
+    }
+  }
 
   let resultDeck = finalDeck
   if (settings.bracket <= 3) {
@@ -939,11 +961,19 @@ export async function generateDeck(
     })
   }
 
+  // Cosmetic last step: swap every card to its printing in the highest-priority
+  // preferred set that has it. Deliberately after pruning and budget work, so it
+  // can never change which cards made the deck.
+  resultDeck = await applyPreferredPrintings(resultDeck, settings.preferredSets ?? [])
+  const finalCommander =
+    resultDeck.find((d) => d.category === 'Commander' && d.card.name === commander.name)?.card ??
+    commander
+
   const power = estimatePower(settings, resultDeck)
   const wantsAttractions = usesAttractions(commander) || (!!partner && usesAttractions(partner))
   const attractions = wantsAttractions ? await buildAttractions() : undefined
   return {
-    commander,
+    commander: finalCommander,
     cards: resultDeck,
     settings,
     power,
@@ -979,7 +1009,7 @@ async function pruneTwoCardCombos(finalDeck: DeckCard[], ctx: PruneCtx): Promise
     const protectedNames = new Set<string>([
       commander.name,
       ...(partner ? [partner.name] : []),
-      ...(settings.mustInclude ?? []).map((c) => c.name),
+      ...(settings.mustInclude ?? []).map((p) => p.card.name),
     ])
     const remove = new Set<string>()
     for (const combo of disallowed) {
@@ -1002,7 +1032,7 @@ async function pruneTwoCardCombos(finalDeck: DeckCard[], ctx: PruneCtx): Promise
     const replacements: DeckCard[] = []
     const reason = `Swapped in for a combo piece rated above Bracket ${settings.bracket} (fast two-card infinite, extra-turn chain, or similar).`
 
-    const cats: Category[] = ['Synergy', 'Card Draw', 'Ramp', 'Removal', 'Finishers']
+    const cats: Category[] = [...FLEX_CATS, 'Card Draw', 'Ramp', 'Removal', 'Counterspells', 'Finishers']
     for (const cat of cats) {
       if (replacements.length >= need) break
       const list = (pool.get(cat) ?? []).sort((a, b) => b.score - a.score)
@@ -1030,6 +1060,8 @@ async function pruneTwoCardCombos(finalDeck: DeckCard[], ctx: PruneCtx): Promise
         if (colorless && deadInColorless(card)) continue
         if (neverSet.has(nm.toLowerCase())) continue
         if (isComboPiece(card)) continue
+        // This pass only runs at bracket 3 and below, so MLD is never allowed.
+        if (isMassLandDenial(card)) continue
         used.add(nm)
         deckNames.add(nm)
         const cat = categorize(card)
@@ -1089,8 +1121,15 @@ const CATEGORY_QUERIES: Partial<Record<Category, string>> = {
   Lands: '-t:basic t:land',
   Ramp: '(o:"{T}: Add" or o:"search your library for a basic land") -t:land mv<=4',
   'Card Draw': 'o:"draw" o:"card" -t:land mv<=5',
+  Tutors: 'o:"search your library for a" -o:"land card" mv<=4',
   Removal: '(o:"destroy target" or o:"exile target") mv<=4',
+  Counterspells: 'o:"counter target" (t:instant or t:creature)',
   'Board Wipes': '(o:"destroy all" or o:"exile all")',
+  'Graveyard Hate': 'o:exile (o:"graveyard" or o:"graveyards") mv<=3',
+  Recursion: 'o:"from your graveyard" (o:"to your hand" or o:"onto the battlefield")',
+  Protection: '(o:hexproof or o:indestructible or o:"protection from" or o:"phase out") mv<=4',
+  Tokens: 'o:create o:"creature token"',
+  Stax: `(o:"can't cast" or o:"more to cast" or o:"don't untap")`,
   Finishers: '(pow>=6 or o:"wins the game") t:creature',
   Synergy: '-t:land',
 }
@@ -1154,7 +1193,22 @@ export async function computeTieredUpgrades(deck: Deck): Promise<UpgradeTier[]> 
   const colorless = identity.length === 0
   const base = deckIdentityQuery(deck)
 
-  const poolCats = ['Ramp', 'Card Draw', 'Removal', 'Board Wipes', 'Lands', 'Synergy', 'Finishers'] as Category[]
+  const poolCats = [
+    'Ramp',
+    'Card Draw',
+    'Tutors',
+    'Removal',
+    'Counterspells',
+    'Board Wipes',
+    'Graveyard Hate',
+    'Recursion',
+    'Protection',
+    'Tokens',
+    'Stax',
+    'Lands',
+    'Synergy',
+    'Finishers',
+  ] as Category[]
   const pools = new Map<Category, ScryCard[]>()
   for (const cat of poolCats) {
     const q = CATEGORY_QUERIES[cat] ?? '-t:land'

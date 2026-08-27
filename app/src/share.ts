@@ -3,23 +3,40 @@ import type { CodDeck, CodEntry } from './cod'
 
 const { compressToEncodedURIComponent, decompressFromEncodedURIComponent } = LZString
 
+// [name, qty] for a plain card, [name, qty, "SET", "collectorNumber"] when the
+// deck pins a printing. Older two-element links still decode unchanged.
+type SharePair = [string, number] | [string, number, string, string?]
+
 interface SharePayload {
   v: number
   fmt: string
-  cmd: [string, number][]
-  cards: [string, number][]
+  cmd: SharePair[]
+  cards: SharePair[]
   n?: string
 }
 
 const VERSION = 1
 
-const toPairs = (entries: CodEntry[]): [string, number][] =>
-  entries.filter((e) => e.name).map((e) => [e.name, e.qty || 1])
+const toPairs = (entries: CodEntry[]): SharePair[] =>
+  entries
+    .filter((e) => e.name)
+    .map((e) =>
+      e.set
+        ? ([e.name, e.qty || 1, e.set, e.collectorNumber] as SharePair)
+        : ([e.name, e.qty || 1] as SharePair)
+    )
 
-const fromPairs = (pairs: [string, number][] | undefined): CodEntry[] =>
+const fromPairs = (pairs: SharePair[] | undefined): CodEntry[] =>
   (pairs ?? [])
     .filter((p) => Array.isArray(p) && typeof p[0] === 'string')
-    .map(([name, qty]) => ({ name, qty: typeof qty === 'number' && qty > 0 ? qty : 1 }))
+    .map(([name, qty, set, collectorNumber]) => {
+      const entry: CodEntry = { name, qty: typeof qty === 'number' && qty > 0 ? qty : 1 }
+      if (typeof set === 'string' && set) entry.set = set.toUpperCase()
+      if (entry.set && typeof collectorNumber === 'string' && collectorNumber) {
+        entry.collectorNumber = collectorNumber
+      }
+      return entry
+    })
 
 export function encodeDeck(cod: CodDeck, fmt = 'commander'): string {
   const payload: SharePayload = {

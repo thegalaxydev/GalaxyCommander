@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type {
   AdvancedOptions,
   BudgetCaps,
@@ -7,14 +7,17 @@ import type {
   PowerProfile,
   ScryCard,
 } from '../types'
-import { META_OPTIONS } from '../types'
+import type { MustIncludeCard } from '../types'
+import { META_OPTIONS, allowsMultiples } from '../types'
 import { SUGGESTED_THEMES, TAGS, describeTheme } from '../themes'
 import type { EdhrecTheme } from '../edhrec'
 import { CommanderSearch } from './CommanderSearch'
 import { CardPicker } from './CardPicker'
+import { SetPriority } from './SetPriority'
 import { PartnerDiscovery } from './PartnerDiscovery'
 import { partnerMode, partnerSearchFilter, unionIdentity } from '../partner'
 import { WUBRG as ALL_COLORS, combineRulebreakers, splashOptions } from '../rulebreaker'
+import { DEFAULT_DECK_SIZE, MAX_DECK_SIZE } from '../generator'
 import { fetchNamedCard, fetchRandomCommander } from '../scryfall'
 import { PERSONALITY_PRESETS } from '../personality'
 
@@ -42,12 +45,14 @@ interface Props {
   onApplyPersonality: (id: Exclude<DeckPersonality, 'custom'>) => void
   meta: string[]
   onMeta: (m: string[]) => void
-  mustInclude: ScryCard[]
-  onMustInclude: (cards: ScryCard[]) => void
+  mustInclude: MustIncludeCard[]
+  onMustInclude: (cards: MustIncludeCard[]) => void
   neverInclude: ScryCard[]
   onNeverInclude: (cards: ScryCard[]) => void
   rules: string
   onRules: (rules: string) => void
+  preferredSets: string[]
+  onPreferredSets: (codes: string[]) => void
   splashColor: string | null
   onSplashColor: (c: string | null) => void
   rulebreakerColors: string[]
@@ -127,6 +132,7 @@ const PROFILE_LABELS: { key: keyof PowerProfile; label: string }[] = [
 
 export function Sidebar(props: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [setsOpen, setSetsOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [rulesOpen, setRulesOpen] = useState(false)
   const [customTheme, setCustomTheme] = useState('')
@@ -162,6 +168,18 @@ export function Sidebar(props: Props) {
   const anyColorGrants = rulebreaker?.grants.filter((g) => g.scope === 'any') ?? []
   const offColors = identity ? ALL_COLORS.filter((c) => !identity.includes(c)) : []
   const identityName = identity?.length ? identity.join('') : 'colorless'
+  // Chips read as an alphabetical list regardless of the order cards were added.
+  const byName = (a: string, b: string) =>
+    a.split(' //')[0].localeCompare(b.split(' //')[0], undefined, { sensitivity: 'base' })
+  const sortedMust = [...props.mustInclude].sort((a, b) => byName(a.card.name, b.card.name))
+  const sortedNever = [...props.neverInclude].sort((a, b) => byName(a.name, b.name))
+  const setPinQty = (pin: MustIncludeCard, qty: number) =>
+    props.onMustInclude(
+      props.mustInclude.map((p) =>
+        p.card.name === pin.card.name ? { ...p, qty: clampPinQty(qty) } : p
+      )
+    )
+
   const toggleRulebreakerColor = (c: string) => {
     const on = props.rulebreakerColors.includes(c)
     const next = on
@@ -354,24 +372,19 @@ export function Sidebar(props: Props) {
           {rulebreaker.noMaxDeckSize && (
             <>
               <h3 className="rule-head">Deck Size</h3>
-              <div className="deck-size-row">
+              <label className="slider-row">
+                <span>
+                  Cards <em>{props.deckSize}</em>
+                </span>
                 <input
                   type="range"
-                  min={100}
-                  max={400}
+                  min={DEFAULT_DECK_SIZE}
+                  max={MAX_DECK_SIZE}
                   step={10}
                   value={props.deckSize}
                   onChange={(e) => props.onDeckSize(Number(e.target.value))}
                 />
-                <input
-                  type="number"
-                  min={100}
-                  max={400}
-                  step={1}
-                  value={props.deckSize}
-                  onChange={(e) => props.onDeckSize(Number(e.target.value))}
-                />
-              </div>
+              </label>
               <p className="hint">This commander removes the 100-card maximum.</p>
             </>
           )}
@@ -589,23 +602,52 @@ export function Sidebar(props: Props) {
                 splash: props.splashColor,
                 colors: props.rulebreakerColors,
               }}
-              exclude={props.mustInclude.map((c) => c.name)}
-              onPick={(card) => props.onMustInclude([...props.mustInclude, card])}
+              exclude={props.mustInclude.map((p) => p.card.name)}
+              onPick={(card) => props.onMustInclude([...props.mustInclude, { card, qty: 1 }])}
             />
             <div className="rule-chips">
-              {props.mustInclude.map((card) => (
-                <span key={card.name} className="rule-chip must">
-                  {card.name.split(' //')[0]}
-                  <button
-                    onClick={() =>
-                      props.onMustInclude(props.mustInclude.filter((c) => c.name !== card.name))
-                    }
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
+              {sortedMust.map((pin) => {
+                const overSingleton = pin.qty > 1 && !allowsMultiples(pin.card)
+                return (
+                  <span key={pin.card.name} className="rule-chip must">
+                    {pin.card.name.split(' //')[0]}
+                    <PinQty
+                      qty={pin.qty}
+                      illegal={overSingleton}
+                      oversized={pin.qty > props.deckSize - 1}
+                      title={
+                        overSingleton
+                          ? `A Commander deck can only run one ${pin.card.name.split(' //')[0]}. The generator will still add ${pin.qty}.`
+                          : 'Copies to include'
+                      }
+                      onChange={(qty) => setPinQty(pin, qty)}
+                    />
+                    <button
+                      title="Unpin"
+                      onClick={() =>
+                        props.onMustInclude(
+                          props.mustInclude.filter((p) => p.card.name !== pin.card.name)
+                        )
+                      }
+                    >
+                      ×
+                    </button>
+                  </span>
+                )
+              })}
             </div>
+            {props.mustInclude.some((p) => p.qty > 1 && !allowsMultiples(p.card)) && (
+              <p className="hint">
+                ⚠ Only basic lands and cards that say &quot;any number of cards named…&quot; may be
+                run as more than one copy. Those pins will still be honoured.
+              </p>
+            )}
+            {props.mustInclude.some((p) => p.qty > props.deckSize - 1) && (
+              <p className="hint">
+                ⚠ A pin asks for more copies than the deck has slots, so the finished deck will be
+                bigger than {props.deckSize} cards.
+              </p>
+            )}
             <h3 className="rule-head never">Never Include</h3>
             <CardPicker
               placeholder="Search a card to ban..."
@@ -613,7 +655,7 @@ export function Sidebar(props: Props) {
               onPick={(card) => props.onNeverInclude([...props.neverInclude, card])}
             />
             <div className="rule-chips">
-              {props.neverInclude.map((card) => (
+              {sortedNever.map((card) => (
                 <span key={card.name} className="rule-chip never">
                   {card.name.split(' //')[0]}
                   <button
@@ -635,11 +677,50 @@ export function Sidebar(props: Props) {
               onChange={(e) => props.onRules(e.target.value)}
             />
             <p className="hint">
-              Scryfall syntax applied to every card added. Space-separated terms all
-              must match; prefix with <code>-</code> to exclude. Supports{' '}
-              <code>t:</code> (type), <code>o:</code> (text), <code>c:</code>/
-              <code>id:</code> (color), <code>mv</code>, <code>r:</code> (rarity),{' '}
-              <code>kw:</code>, <code>is:</code>.
+              Full{' '}
+              <a href="https://scryfall.com/docs/syntax" target="_blank" rel="noreferrer">
+                Scryfall search syntax
+              </a>
+              , applied to every card added. Space-separated terms all must match;{' '}
+              <code>-</code> excludes, <code>or</code> and <code>( )</code> combine,{' '}
+              <code>!</code> matches an exact name, and <code>/…/</code> is a regex.
+            </p>
+            <p className="hint">
+              Types <code>t:</code> · text <code>o:</code> <code>fo:</code> <code>kw:</code> ·
+              colors <code>c:</code> <code>id:</code> <code>produces:</code>{' '}
+              <code>devotion:</code> · mana <code>m:</code> <code>mv:</code> · stats{' '}
+              <code>pow:</code> <code>tou:</code> <code>pt:</code> <code>loy:</code> · printing{' '}
+              <code>r:</code> <code>e:</code> <code>st:</code> <code>cn:</code>{' '}
+              <code>border:</code> <code>frame:</code> <code>stamp:</code> <code>lang:</code> ·
+              legality <code>f:</code> <code>banned:</code> <code>restricted:</code> ·{' '}
+              <code>year:</code> <code>date:</code> <code>usd:</code> <code>eur:</code>{' '}
+              <code>tix:</code> <code>edhrecrank:</code> · flavor <code>a:</code>{' '}
+              <code>ft:</code> <code>wm:</code> · plus <code>is:</code> / <code>not:</code> and{' '}
+              <code>has:</code>.
+            </p>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <button className="advanced-toggle" onClick={() => setSetsOpen(!setsOpen)}>
+          Preferred Sets{' '}
+          {props.preferredSets.length > 0 && (
+            <span className="badge">{props.preferredSets.length}</span>
+          )}{' '}
+          {setsOpen ? '▾' : '▸'}
+        </button>
+        {setsOpen && (
+          <div className="card-rules">
+            <SetPriority
+              value={props.preferredSets}
+              onChange={props.onPreferredSets}
+              disabled={props.disabled}
+            />
+            <p className="hint">
+              Every card in the finished deck is printed from the highest set on this list that
+              has it, and those printings carry into .cod and .txt exports. Art only — it never
+              changes which cards the generator picks.
             </p>
           </div>
         )}
@@ -672,5 +753,98 @@ export function Sidebar(props: Props) {
         </div>
       )}
     </aside>
+  )
+}
+
+/**
+ * There is no rules limit on how many copies you can pin, so the only bound is
+ * the largest deck the generator will build — past that the number could not
+ * fit in any deck it could produce.
+ */
+function clampPinQty(qty: number): number {
+  return Math.max(1, Math.min(MAX_DECK_SIZE, Math.round(qty)))
+}
+
+/**
+ * Copy count on a Must Include chip: type a number or step it with the buttons.
+ * The typed value is held as a draft string so a half-finished entry (or a
+ * cleared field) isn't clamped back to 1 on every keystroke — it commits on
+ * blur or Enter, and Escape reverts.
+ */
+function PinQty({
+  qty,
+  illegal,
+  oversized,
+  title,
+  onChange,
+}: {
+  qty: number
+  illegal: boolean
+  /** More copies than the deck has room for — the deck will overflow its size. */
+  oversized: boolean
+  title: string
+  onChange: (qty: number) => void
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  // Escape blurs the field, and blur fires before React re-renders the cleared
+  // draft — without this the discarded text would be committed on the way out.
+  const reverting = useRef(false)
+
+  const step = (delta: number) => {
+    setDraft(null)
+    onChange(clampPinQty(qty + delta))
+  }
+
+  const commit = (raw: string) => {
+    setDraft(null)
+    const n = parseInt(raw, 10)
+    if (Number.isFinite(n)) onChange(clampPinQty(n))
+  }
+
+  return (
+    <span className={`pin-qty ${illegal || oversized ? 'illegal' : ''}`} title={title}>
+      <button type="button" title="One fewer copy" disabled={qty <= 1} onClick={() => step(-1)}>
+        −
+      </button>
+      <input
+        type="text"
+        inputMode="numeric"
+        aria-label="Copies"
+        value={draft ?? String(qty)}
+        onFocus={(e) => e.currentTarget.select()}
+        onChange={(e) => setDraft(e.target.value.replace(/\D/g, '').slice(0, 4))}
+        onBlur={(e) => {
+          if (reverting.current) {
+            reverting.current = false
+            setDraft(null)
+            return
+          }
+          commit(e.target.value)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+          else if (e.key === 'Escape') {
+            reverting.current = true
+            setDraft(null)
+            e.currentTarget.blur()
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault()
+            step(1)
+          } else if (e.key === 'ArrowDown') {
+            e.preventDefault()
+            step(-1)
+          }
+        }}
+      />
+      {(illegal || oversized) && <span className="pin-warn">⚠</span>}
+      <button
+        type="button"
+        title="One more copy"
+        disabled={qty >= MAX_DECK_SIZE}
+        onClick={() => step(1)}
+      >
+        +
+      </button>
+    </span>
   )
 }

@@ -15,6 +15,7 @@ import {
   upsertSavedDeck,
   deleteSavedDeck,
   codCardName,
+  codPrinting,
   type CodDeck,
   type CodEntry,
   type SavedDeck,
@@ -23,6 +24,8 @@ import { detectDeckUrl, importDeckFromUrl } from '../deckImport'
 import { fetchPreconList, fetchPrecon, type PreconSummary } from '../mtgjson'
 import { buildShareUrl, createPermalink } from '../share'
 import { CardPicker } from './CardPicker'
+import { PrintingPicker } from './PrintingPicker'
+import { fetchPinnedPrintings, pinKey, printingLabel, toPreferredPrintings } from '../printings'
 import { StatsPanel } from './StatsPanel'
 import { ManaCost } from './ManaCost'
 import { SvgIcon } from './Icons'
@@ -32,6 +35,9 @@ interface Entry {
   name: string
   qty: number
   card: ScryCard | null
+  /** Printing named by the imported list, kept for cards Scryfall couldn't resolve. */
+  set?: string
+  collectorNumber?: string
 }
 
 interface Hover {
@@ -44,9 +50,19 @@ interface Props {
   onAnalyze: (commander: ScryCard, partner: ScryCard | null, cards: DeckCard[], name: string) => void
   onImprove: (commander: ScryCard, partner: ScryCard | null, cards: ScryCard[]) => void
   initialDeck?: CodDeck | null
+  /** Set codes from the generator sidebar, highest priority first. */
+  preferredSets?: string[]
+  /** Write set / collector number into exported files. */
+  exportPrintings?: boolean
 }
 
-export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
+export function DeckBuilder({
+  onAnalyze,
+  onImprove,
+  initialDeck,
+  preferredSets = [],
+  exportPrintings = true,
+}: Props) {
   const [saved, setSaved] = useState<SavedDeck[]>(loadSavedDecks)
   const [deckId, setDeckId] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -65,6 +81,8 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
   const [shared, setShared] = useState(false)
   const [permaBusy, setPermaBusy] = useState(false)
   const [permaFlash, setPermaFlash] = useState(false)
+  const [artFor, setArtFor] = useState<{ zone: 'side' | 'main'; entry: Entry } | null>(null)
+  const [applyingSets, setApplyingSets] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const lastLoadedDeck = useRef<CodDeck | null>(null)
 
@@ -99,11 +117,20 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
     [side, main]
   )
 
+  const toEntry = (e: Entry): CodEntry => ({
+    name: e.card ? codCardName(e.card) : e.name,
+    qty: e.qty,
+    // Unresolved cards keep whatever printing the import named.
+    ...(e.card ? codPrinting(e.card) : { set: e.set, collectorNumber: e.collectorNumber }),
+  })
+
   const toCodDeck = (): CodDeck => ({
     name: name.trim() || 'Untitled Deck',
-    side: side.map((e) => ({ name: e.card ? codCardName(e.card) : e.name, qty: e.qty })),
-    main: main.map((e) => ({ name: e.card ? codCardName(e.card) : e.name, qty: e.qty })),
+    side: side.map(toEntry),
+    main: main.map(toEntry),
   })
+
+  const codOptions = { includePrintings: exportPrintings }
 
   const commanderCard = side.find((e) => e.card)?.card ?? null
   const partnerCard = side.filter((e) => e.card)[1]?.card ?? null
@@ -150,7 +177,7 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
 
   const exportDeckText = async (deckName: string, cod: CodDeck) => {
     try {
-      await downloadCodText(deckName, cod)
+      await downloadCodText(deckName, cod, codOptions)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       window.alert(message)
@@ -160,7 +187,15 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
   const loadCodDeck = async (cod: CodDeck) => {
     setBusy(true)
     try {
-      const resolved = await resolveCards([...cod.side, ...cod.main].map((e) => e.name))
+      const entries = [...cod.side, ...cod.main]
+      const [resolved, pinned] = await Promise.all([
+        resolveCards(entries.map((e) => e.name)),
+        // Entries that name a printing get that exact art back; the rest fall
+        // through to Scryfall's default printing for the card.
+        fetchPinnedPrintings(entries.filter((e) => e.set)).catch(
+          () => new Map<string, ScryCard>()
+        ),
+      ])
       const lookup = new Map<string, ScryCard>()
       for (const card of resolved.values()) {
         lookup.set(card.name.toLowerCase(), card)
@@ -172,6 +207,7 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
       const mk = (e: CodEntry): Entry => {
         const key = e.name.toLowerCase()
         const card =
+          (e.set ? pinned.get(pinKey(e)) : undefined) ??
           resolved.get(e.name) ??
           resolved.get(key) ??
           lookup.get(key) ??
@@ -306,6 +342,43 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
       setPreconError(err instanceof Error ? err.message : 'Could not load that precon.')
     } finally {
       setBusy(false)
+    }
+  }
+
+  const setPrinting = (zone: 'side' | 'main', entryName: string, printing: ScryCard) =>
+    updateList(zone, (list) =>
+      list.map((e) =>
+        e.name === entryName
+          ? { ...e, card: printing, set: undefined, collectorNumber: undefined }
+          : e
+      )
+    )
+
+  // Re-prints the whole deck from the preferred-set list configured on the
+  // Generate tab. Cards with no printing in any of those sets are left alone.
+  const applyPreferredSets = async () => {
+    if (!preferredSets.length || applyingSets) return
+    setApplyingSets(true)
+    try {
+      const cards = [...side, ...main].map((e) => e.card).filter((c): c is ScryCard => !!c)
+      const swaps = await toPreferredPrintings(cards, preferredSets)
+      if (!swaps.size) {
+        window.alert('No cards in this deck have a printing in those sets.')
+        return
+      }
+      const swap = (list: Entry[]) =>
+        list.map((e) => {
+          const next = e.card ? swaps.get(e.card.name) : undefined
+          return next && next.id !== e.card?.id
+            ? { ...e, card: next, set: undefined, collectorNumber: undefined }
+            : e
+        })
+      setSide(swap)
+      setMain(swap)
+    } catch {
+      window.alert('Could not reach Scryfall to look up those printings.')
+    } finally {
+      setApplyingSets(false)
     }
   }
 
@@ -461,7 +534,12 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
                 <button
                   type="button"
                   title="Export .cod"
-                  onClick={() => void exportDeck(d.name, d.cod)}
+                  onClick={() =>
+                    void exportDeck(
+                      d.name,
+                      exportPrintings ? d.cod : deckToCod(parseCod(d.cod), codOptions)
+                    )
+                  }
                 >
                   ⬇
                 </button>
@@ -507,7 +585,7 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
           <button
             type="button"
             className="new-build"
-            onClick={() => void exportDeck(name.trim() || 'deck', deckToCod(toCodDeck()))}
+            onClick={() => void exportDeck(name.trim() || 'deck', deckToCod(toCodDeck(), codOptions))}
             disabled={total === 0}
           >
             ⬇ Export .cod
@@ -520,6 +598,17 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
           >
             ⬇ Export .txt
           </button>
+          {preferredSets.length > 0 && (
+            <button
+              type="button"
+              className="new-build"
+              onClick={() => void applyPreferredSets()}
+              disabled={total === 0 || applyingSets}
+              title={`Re-print every card from the first of these sets that has it: ${preferredSets.join(', ')}`}
+            >
+              {applyingSets ? 'Applying…' : `🎨 Apply sets (${preferredSets.join(', ')})`}
+            </button>
+          )}
           <button
             type="button"
             className="new-build"
@@ -542,10 +631,22 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
 
         <div className="builder-search">
           <CardPicker
-            placeholder="Search any card to add..."
+            placeholder="Search a card name, or Scryfall syntax like t:goblin mv<=3..."
             exclude={[...side, ...main].map((e) => e.name)}
             onPick={addCard}
           />
+          <p className="hint">
+            Type a name, or use{' '}
+            <a href="https://scryfall.com/docs/syntax" target="_blank" rel="noreferrer">
+              Scryfall syntax
+            </a>{' '}
+            to search by anything else — types <code>t:</code>, text <code>o:</code>{' '}
+            <code>kw:</code>, colors <code>c:</code> <code>id:</code>, mana <code>m:</code>{' '}
+            <code>mv:</code>, stats <code>pow:</code> <code>tou:</code>, printing{' '}
+            <code>r:</code> <code>e:</code> <code>year:</code>, price <code>usd:</code>, plus{' '}
+            <code>is:</code> / <code>not:</code>, <code>-</code> to exclude and{' '}
+            <code>!</code> for an exact name.
+          </p>
         </div>
 
         {busy ? (
@@ -570,6 +671,7 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
                   onMove={moveEntry}
                   onHover={showHover}
                   onLeave={() => setHover(null)}
+                  onArt={(entry) => setArtFor({ zone: 'side', entry })}
                 />
               ))}
             </section>
@@ -605,6 +707,7 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
                       onMove={moveEntry}
                       onHover={showHover}
                       onLeave={() => setHover(null)}
+                      onArt={(entry) => setArtFor({ zone: 'main', entry })}
                     />
                   ))}
                 </section>
@@ -628,6 +731,18 @@ export function DeckBuilder({ onAnalyze, onImprove, initialDeck }: Props) {
           src={hover.src}
           style={{ top: hover.y, left: hover.x }}
           alt=""
+        />
+      )}
+
+      {artFor?.entry.card && (
+        <PrintingPicker
+          key={artFor.entry.card.id}
+          card={artFor.entry.card}
+          onClose={() => setArtFor(null)}
+          onPick={(printing) => {
+            setPrinting(artFor.zone, artFor.entry.name, printing)
+            setArtFor(null)
+          }}
         />
       )}
     </div>
@@ -695,6 +810,7 @@ function BuilderRow({
   onMove,
   onHover,
   onLeave,
+  onArt,
 }: {
   entry: Entry
   zone: 'side' | 'main'
@@ -703,6 +819,7 @@ function BuilderRow({
   onMove: (from: 'side' | 'main', name: string) => void
   onHover: (card: ScryCard | null, e: React.MouseEvent) => void
   onLeave: () => void
+  onArt: (entry: Entry) => void
 }) {
   const card = entry.card
   return (
@@ -730,6 +847,15 @@ function BuilderRow({
         </span>
       )}
       <span className="row-buttons">
+        {card && (
+          <button
+            className="art-btn"
+            title={`Choose printing — currently ${printingLabel(card) || 'default'}`}
+            onClick={() => onArt(entry)}
+          >
+            🎨
+          </button>
+        )}
         <button title="Remove one" onClick={() => onQty(zone, entry.name, -1)}>
           −
         </button>

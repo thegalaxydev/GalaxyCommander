@@ -41,12 +41,36 @@ export const PERSONALITY_WEIGHTS: Record<DeckPersonality, ScoreWeights> = {
 }
 
 const ROLE_PRIORITY: Record<DeckPersonality, Partial<Record<Category, number>>> = {
-  custom: { Ramp: 0.7, 'Card Draw': 0.8, Removal: 0.7, 'Board Wipes': 0.5, Synergy: 0.7, Finishers: 0.5 },
-  value: { Ramp: 0.7, 'Card Draw': 0.85, Removal: 0.7, 'Board Wipes': 0.5, Synergy: 0.7, Finishers: 0.5 },
-  combo: { Ramp: 0.7, 'Card Draw': 0.8, Removal: 0.5, 'Board Wipes': 0.3, Synergy: 0.95, Finishers: 0.4 },
-  control: { Ramp: 0.5, 'Card Draw': 0.9, Removal: 1.0, 'Board Wipes': 0.9, Synergy: 0.6, Finishers: 0.4 },
-  aggro: { Ramp: 0.6, 'Card Draw': 0.4, Removal: 0.5, 'Board Wipes': 0.2, Synergy: 0.8, Finishers: 1.0 },
-  synergy: { Ramp: 0.6, 'Card Draw': 0.6, Removal: 0.5, 'Board Wipes': 0.4, Synergy: 1.0, Finishers: 0.6 },
+  custom: {
+    Ramp: 0.7, 'Card Draw': 0.8, Tutors: 0.6, Removal: 0.7, Counterspells: 0.6,
+    'Board Wipes': 0.5, 'Graveyard Hate': 0.4, Recursion: 0.55, Protection: 0.55,
+    Tokens: 0.55, Stax: 0.35, Synergy: 0.7, Finishers: 0.5,
+  },
+  value: {
+    Ramp: 0.7, 'Card Draw': 0.85, Tutors: 0.55, Removal: 0.7, Counterspells: 0.55,
+    'Board Wipes': 0.5, 'Graveyard Hate': 0.4, Recursion: 0.65, Protection: 0.5,
+    Tokens: 0.55, Stax: 0.3, Synergy: 0.7, Finishers: 0.5,
+  },
+  combo: {
+    Ramp: 0.7, 'Card Draw': 0.8, Tutors: 0.95, Removal: 0.5, Counterspells: 0.7,
+    'Board Wipes': 0.3, 'Graveyard Hate': 0.35, Recursion: 0.6, Protection: 0.7,
+    Tokens: 0.4, Stax: 0.5, Synergy: 0.95, Finishers: 0.4,
+  },
+  control: {
+    Ramp: 0.5, 'Card Draw': 0.9, Tutors: 0.7, Removal: 1.0, Counterspells: 1.0,
+    'Board Wipes': 0.9, 'Graveyard Hate': 0.6, Recursion: 0.5, Protection: 0.6,
+    Tokens: 0.4, Stax: 0.7, Synergy: 0.6, Finishers: 0.4,
+  },
+  aggro: {
+    Ramp: 0.6, 'Card Draw': 0.4, Tutors: 0.4, Removal: 0.5, Counterspells: 0.3,
+    'Board Wipes': 0.2, 'Graveyard Hate': 0.3, Recursion: 0.45, Protection: 0.6,
+    Tokens: 0.8, Stax: 0.2, Synergy: 0.8, Finishers: 1.0,
+  },
+  synergy: {
+    Ramp: 0.6, 'Card Draw': 0.6, Tutors: 0.6, Removal: 0.5, Counterspells: 0.4,
+    'Board Wipes': 0.4, 'Graveyard Hate': 0.35, Recursion: 0.6, Protection: 0.5,
+    Tokens: 0.7, Stax: 0.3, Synergy: 1.0, Finishers: 0.6,
+  },
 }
 
 export function resolveWeights(

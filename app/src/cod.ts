@@ -1,4 +1,4 @@
-import type { Deck, ScryCard } from './types'
+import type { Deck, DeckCard, ScryCard } from './types'
 import { scheduleUserDataSync } from './auth/sync'
 
 const FULL_NAME_LAYOUTS = new Set(['split', 'adventure', 'aftermath', 'prepare'])
@@ -11,6 +11,24 @@ export function codCardName(card: ScryCard): string {
 export interface CodEntry {
   name: string
   qty: number
+  /** Set code of the chosen printing, upper-cased — Cockatrice's setShortName. */
+  set?: string
+  /** Collector number within that set. */
+  collectorNumber?: string
+}
+
+/** Reads the printing off a resolved card, if it has one. */
+export function codPrinting(card: ScryCard | null | undefined): Pick<CodEntry, 'set' | 'collectorNumber'> {
+  if (!card?.set || !card.collector_number) return {}
+  return { set: card.set.toUpperCase(), collectorNumber: card.collector_number }
+}
+
+export interface CodOptions {
+  /**
+   * Write setShortName / collectorNumber so Cockatrice shows the exact printing.
+   * Off falls back to name-only cards, letting Cockatrice pick its own art.
+   */
+  includePrintings?: boolean
 }
 
 export interface CodDeck {
@@ -35,12 +53,19 @@ function codTimestamp(): string {
   return `${days[d.getDay()]} ${months[d.getMonth()]} ${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${d.getFullYear()}`
 }
 
-export function deckToCod(deck: CodDeck): string {
+export function deckToCod(deck: CodDeck, opts: CodOptions = {}): string {
+  const includePrintings = opts.includePrintings ?? true
+  const cardTag = (c: CodEntry) => {
+    const attrs = [`number="${c.qty}"`, `name="${esc(c.name)}"`]
+    if (includePrintings && c.set) {
+      attrs.push(`setShortName="${esc(c.set)}"`)
+      if (c.collectorNumber) attrs.push(`collectorNumber="${esc(c.collectorNumber)}"`)
+    }
+    return `        <card ${attrs.join(' ')}/>`
+  }
   const zone = (name: string, cards: CodEntry[]) =>
     cards.length
-      ? `    <zone name="${name}">\n${cards
-          .map((c) => `        <card number="${c.qty}" name="${esc(c.name)}"/>`)
-          .join('\n')}\n    </zone>`
+      ? `    <zone name="${name}">\n${cards.map(cardTag).join('\n')}\n    </zone>`
       : `    <zone name="${name}"/>`
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -62,10 +87,17 @@ export function parseCod(xml: string): CodDeck {
   if (doc.querySelector('parsererror')) throw new Error('Not a valid .cod file')
   const read = (zoneName: string): CodEntry[] =>
     [...doc.querySelectorAll(`zone[name="${zoneName}"] card`)]
-      .map((el) => ({
-        name: el.getAttribute('name') ?? '',
-        qty: parseInt(el.getAttribute('number') ?? '1', 10) || 1,
-      }))
+      .map((el) => {
+        const entry: CodEntry = {
+          name: el.getAttribute('name') ?? '',
+          qty: parseInt(el.getAttribute('number') ?? '1', 10) || 1,
+        }
+        const set = el.getAttribute('setShortName')?.trim()
+        const num = el.getAttribute('collectorNumber')?.trim()
+        if (set) entry.set = set.toUpperCase()
+        if (set && num) entry.collectorNumber = num
+        return entry
+      })
       .filter((c) => c.name)
   return {
     name: doc.querySelector('deckname')?.textContent ?? '',
@@ -75,15 +107,16 @@ export function parseCod(xml: string): CodDeck {
 }
 
 export function generatedDeckToCod(deck: Deck): CodDeck {
+  const entry = (d: DeckCard): CodEntry => ({
+    name: codCardName(d.card),
+    qty: d.qty,
+    ...codPrinting(d.card),
+  })
   const side = [
-    ...deck.cards
-      .filter((d) => d.category === 'Commander')
-      .map((d) => ({ name: codCardName(d.card), qty: d.qty })),
-    ...(deck.attractions ?? []).map((d) => ({ name: codCardName(d.card), qty: d.qty })),
+    ...deck.cards.filter((d) => d.category === 'Commander').map(entry),
+    ...(deck.attractions ?? []).map(entry),
   ]
-  const main = deck.cards
-    .filter((d) => d.category !== 'Commander')
-    .map((d) => ({ name: codCardName(d.card), qty: d.qty }))
+  const main = deck.cards.filter((d) => d.category !== 'Commander').map(entry)
   const lead = deck.commander.name.split(',')[0]
   const themes = deck.settings.themes.join(' ')
   return { name: themes ? `${lead} ${themes}` : lead, side, main }
@@ -154,8 +187,16 @@ export async function downloadCod(filename: string, xml: string) {
   await saveTextFile(filename, xml, 'cod', 'Cockatrice Deck', 'application/xml;charset=utf-8')
 }
 
-export function deckToText(deck: Deck): string {
-  const line = (d: Deck['cards'][number]) => `${d.qty} ${codCardName(d.card)}`
+/** `1 Sol Ring (LTC) 264` — the printing suffix Moxfield/Archidekt/MTGA all read. */
+function printingSuffix(entry: Pick<CodEntry, 'set' | 'collectorNumber'>, include: boolean): string {
+  if (!include || !entry.set) return ''
+  return entry.collectorNumber ? ` (${entry.set}) ${entry.collectorNumber}` : ` (${entry.set})`
+}
+
+export function deckToText(deck: Deck, opts: CodOptions = {}): string {
+  const include = opts.includePrintings ?? true
+  const line = (d: Deck['cards'][number]) =>
+    `${d.qty} ${codCardName(d.card)}${printingSuffix(codPrinting(d.card), include)}`
   const commanders = deck.cards.filter((d) => d.category === 'Commander')
   const main = deck.cards.filter((d) => d.category !== 'Commander')
   const out: string[] = []
@@ -174,8 +215,8 @@ export function deckToText(deck: Deck): string {
   return out.join('\n') + '\n'
 }
 
-export async function downloadText(filename: string, deck: Deck) {
-  await saveTextFile(filename, deckToText(deck), 'txt', 'Decklist', 'text/plain;charset=utf-8')
+export async function downloadText(filename: string, deck: Deck, opts: CodOptions = {}) {
+  await saveTextFile(filename, deckToText(deck, opts), 'txt', 'Decklist', 'text/plain;charset=utf-8')
 }
 
 function cleanImportedName(raw: string): string {
@@ -195,14 +236,31 @@ const SKIP_SECTION = /^(sideboard|side\s?board|maybe\s?board|maybe|considering|t
 const MAIN_SECTION = /^(deck|mainboard|main\s?board|main|library|cards)\b/i
 const CATEGORY_HEADER = /^[A-Za-z][A-Za-z '/&-]*\s*\(\d+\)\s*$/
 
+// `(LTC) 264` / `(ltc) 264 *F*` trailing a decklist line — the printing most
+// exporters append. Captured on import so a chosen art survives a .txt round trip.
+const TEXT_PRINTING = /\(([A-Za-z0-9]{2,6})\)\s*([A-Za-z0-9\u2605-]*)\s*(?:\*[^*]*\*)?\s*$/
+
+function readTextPrinting(raw: string): Pick<CodEntry, 'set' | 'collectorNumber'> {
+  const m = raw.match(TEXT_PRINTING)
+  if (!m) return {}
+  const entry: Pick<CodEntry, 'set' | 'collectorNumber'> = { set: m[1].toUpperCase() }
+  if (m[2]) entry.collectorNumber = m[2]
+  return entry
+}
+
 export function parseText(text: string): CodDeck {
   const lines = text.split(/\r?\n/)
   const side: CodEntry[] = []
   const main: CodEntry[] = []
   let zone: 'side' | 'main' | 'skip' = 'main'
-  const push = (z: 'side' | 'main' | 'skip', name: string, qty: number) => {
+  const push = (
+    z: 'side' | 'main' | 'skip',
+    name: string,
+    qty: number,
+    printing: Pick<CodEntry, 'set' | 'collectorNumber'> = {}
+  ) => {
     if (z === 'skip' || !name) return
-    ;(z === 'side' ? side : main).push({ name, qty })
+    ;(z === 'side' ? side : main).push({ name, qty, ...printing })
   }
   for (const raw of lines) {
     const line = raw.trim()
@@ -211,7 +269,7 @@ export function parseText(text: string): CodDeck {
     if (qtyMatch) {
       const qty = parseInt(qtyMatch[1], 10) || 1
       const name = cleanImportedName(qtyMatch[2])
-      push(zone, name, qty)
+      push(zone, name, qty, readTextPrinting(qtyMatch[2]))
       continue
     }
     if (SIDE_SECTION.test(line)) zone = 'side'
@@ -222,8 +280,9 @@ export function parseText(text: string): CodDeck {
   return { name: 'Imported Deck', side, main }
 }
 
-export function codToText(cod: CodDeck): string {
-  const line = (c: CodEntry) => `${c.qty} ${c.name}`
+export function codToText(cod: CodDeck, opts: CodOptions = {}): string {
+  const include = opts.includePrintings ?? true
+  const line = (c: CodEntry) => `${c.qty} ${c.name}${printingSuffix(c, include)}`
   const out: string[] = []
   if (cod.side.length) {
     out.push('Commander')
@@ -235,8 +294,8 @@ export function codToText(cod: CodDeck): string {
   return out.join('\n') + '\n'
 }
 
-export async function downloadCodText(filename: string, cod: CodDeck) {
-  await saveTextFile(filename, codToText(cod), 'txt', 'Decklist', 'text/plain;charset=utf-8')
+export async function downloadCodText(filename: string, cod: CodDeck, opts: CodOptions = {}) {
+  await saveTextFile(filename, codToText(cod, opts), 'txt', 'Decklist', 'text/plain;charset=utf-8')
 }
 
 export interface SavedDeck {

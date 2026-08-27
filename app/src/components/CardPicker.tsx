@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ScryCard } from '../types'
-import { searchCards, cardImage, legalOrUpcoming } from '../scryfall'
+import {
+  searchCards,
+  cardImage,
+  legalOrUpcoming,
+  isScrySyntax,
+  sortByNameMatch,
+} from '../scryfall'
 import {
   identityClause,
   type RulebreakerChoices,
@@ -17,6 +23,9 @@ interface Props {
   onPick: (card: ScryCard) => void
 }
 
+/** How many results the dropdown shows — it scrolls past the first few. */
+const LIMIT = 14
+
 export function CardPicker({
   placeholder,
   identity,
@@ -30,11 +39,13 @@ export function CardPicker({
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
+  const syntax = isScrySyntax(query.trim())
 
   useEffect(() => {
     const t = setTimeout(async () => {
-      const clean = query.trim().replace(/"/g, '')
-      if (clean.length < 2) {
+      const raw = query.trim()
+      const clean = raw.replace(/"/g, '')
+      if (raw.length < 2) {
         setResults([])
         setLoading(false)
         return
@@ -43,11 +54,32 @@ export function CardPicker({
       const idFilter = identity?.length
         ? ` ${identityClause(identity, rulebreaker, rulebreakerChoices)}`
         : ''
-      const cards = await searchCards(`${legalOrUpcoming()}${idFilter} name:"${clean}"`, {
-        order: 'edhrec',
-        max: 8,
-      }).catch(() => [] as ScryCard[])
-      setResults(cards)
+      const base = `${legalOrUpcoming()}${idFilter}`
+      if (isScrySyntax(raw)) {
+        // Scryfall syntax: hand the query straight through, only bounded by the
+        // deck's legality/identity filters.
+        const cards = await searchCards(`${base} (${raw})`, {
+          order: 'edhrec',
+          max: LIMIT,
+        }).catch(() => [] as ScryCard[])
+        setResults(cards)
+      } else {
+        // Plain text: a substring search plus an exact-name lookup, so a card
+        // whose name is a common word ("Island") is always reachable even when
+        // hundreds of longer names match and outrank it.
+        const [matches, exact] = await Promise.all([
+          searchCards(`${base} name:"${clean}"`, { order: 'edhrec', max: 60 }).catch(
+            () => [] as ScryCard[]
+          ),
+          searchCards(`${base} !"${clean}"`, { order: 'edhrec', max: 1 }).catch(
+            () => [] as ScryCard[]
+          ),
+        ])
+        const merged = [...exact, ...matches]
+        const seen = new Set<string>()
+        const unique = merged.filter((c) => !seen.has(c.name) && seen.add(c.name))
+        setResults(sortByNameMatch(unique, clean).slice(0, LIMIT))
+      }
       setLoading(false)
       setOpen(true)
     }, 300)
@@ -75,6 +107,9 @@ export function CardPicker({
       />
       {open && (visible.length > 0 || loading) && (
         <div className="search-dropdown">
+          {syntax && (
+            <div className="search-syntax">Scryfall syntax search</div>
+          )}
           {loading && <div className="search-loading">Searching...</div>}
           {visible.map((card) => (
             <div

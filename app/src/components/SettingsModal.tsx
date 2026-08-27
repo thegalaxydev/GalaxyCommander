@@ -202,6 +202,18 @@ function SettingsForm({
             />
             Disable card hover previews
           </label>
+          <label className="settings-check">
+            <input
+              type="checkbox"
+              checked={draft.exportPrintings}
+              onChange={(e) => setDraft({ ...draft, exportPrintings: e.target.checked })}
+            />
+            Pin card printings in exports (set code + collector number)
+          </label>
+          <p className="hint">
+            Cockatrice shows the exact art you picked. Turn this off to export card names only and
+            let Cockatrice choose its own printings.
+          </p>
         </section>
 
         <section className="settings-section">

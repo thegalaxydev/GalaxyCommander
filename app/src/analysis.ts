@@ -1,5 +1,6 @@
 import type { Category, ComboInfo, Deck, DeckCard, ScryCard } from './types'
 import { cardPrice, cardOracle } from './scryfall'
+import { cardRoles } from './categorize'
 import { unionIdentity } from './partner'
 
 const WUBRG = ['W', 'U', 'B', 'R', 'G'] as const
@@ -45,6 +46,17 @@ export function colorBalanceFromCards(cards: DeckCard[]): ColorBalance[] {
 
 function recommendedSources(pips: number): number {
   return Math.max(9, Math.min(17, Math.round(pips * 0.45) + 7))
+}
+
+/**
+ * How many cards a combo actually needs. Spellbook's `uses` lists only the
+ * named cards; a combo like Hullbreaker Horror + Sol Ring also requires a
+ * "Permanent that can be cast using {C}", making it a three-card line and so
+ * legal in brackets 1-3 where two-card infinites are not.
+ */
+export function comboSize(combo: ComboInfo): number {
+  const templates = (combo.requires ?? []).reduce((n, r) => n + (r.quantity ?? 1), 0)
+  return combo.cards.length + templates
 }
 
 export function isGameEndingCombo(combo: ComboInfo): boolean {
@@ -101,16 +113,27 @@ export function comboTagInfo(
   return info ? { code, ...info } : null
 }
 
-// Lowest Commander bracket a combo is appropriate for. Prefers Spellbook's own
-// bracketTag; falls back to a deployment-speed estimate when no tag is present.
+// Lowest Commander bracket a combo is allowed in. Takes the stricter of
+// Spellbook's own bracketTag and a structural read of the combo itself.
 export function comboMinBracket(combo: ComboInfo, cards: DeckCard[]): number {
   if (comboChainsExtraTurns(combo)) return 4
+  // Spellbook's bracketTag rates how *spicy* a combo is, not whether the
+  // bracket rules allow it. It tags Springheart Nantuko + Lotus Cobra as "E"
+  // (Exhibition) because infinite landfall doesn't win on the spot — but it is
+  // still a two-card infinite, which bracket 3 and below disallow. Taking the
+  // tag as an early return let those through; both signals are floors, so the
+  // stricter one has to win.
   const tag = (combo.bracketTag ?? '').toUpperCase()
-  if (Object.prototype.hasOwnProperty.call(TAG_MIN_BRACKET, tag)) return TAG_MIN_BRACKET[tag]
-  if (combo.cards.length <= 2 && isGameEndingCombo(combo)) {
-    return comboEarliestTurn(combo, cards) <= 5 ? 4 : 3
-  }
-  return 1
+  const tagFloor = Object.prototype.hasOwnProperty.call(TAG_MIN_BRACKET, tag)
+    ? TAG_MIN_BRACKET[tag]
+    : 1
+  const structuralFloor =
+    comboSize(combo) <= 2 && isGameEndingCombo(combo)
+      ? comboEarliestTurn(combo, cards) <= 5
+        ? 4
+        : 3
+      : 1
+  return Math.max(tagFloor, structuralFloor)
 }
 
 const BRACKET_LABELS: Record<number, string> = {
@@ -158,10 +181,46 @@ const MLD_NAMES = new Set(
   ].map((n) => n.toLowerCase())
 )
 
+// Mass land denial is disallowed at bracket 3 and below. The old check only
+// looked for the literal phrase "destroy all lands", which missed most of the
+// category — Devastation reads "Destroy all creatures and lands", Boil reads
+// "Destroy all Islands", Apocalypse reads "Destroy all permanents".
+const MASS_DESTROY = /\b(?:destroy|exile)\s+(?:all|each)\b/i
+// `\blands?\b` deliberately does not match "nonland", so mass wipes phrased as
+// "destroy all nonland permanents" stay classified as wipes, not land denial.
+const LAND_NOUN = /\b(?:lands?|plains|islands?|swamps?|mountains?|forests?)\b/i
+const BASIC_TYPES = /\b(?:plains|islands?|swamps?|mountains?|forests?)\b/i
+const ALL_PERMANENTS = /\b(?:destroy|exile)\s+all\s+permanents\b/i
+const MULTI_TARGET_LANDS = /\bdestroy\s+(?:X|\d+|all|each)\s+target\s+(?:\w+\s+){0,3}lands?\b/i
+// The bracket rule covers land *denial*, not just destruction: Stasis effects,
+// forced sacrifice, and type-changing (Blood Moon, Conversion) all qualify.
+const LAND_LOCK = /\b(?:lands?|plains|islands?|swamps?|mountains?|forests?)\b[^.]*\bdon't untap\b/i
+// Order-independent: "sacrifices X lands" and "chooses a land ... then
+// sacrifices the rest" (Global Ruin) are both forced land sacrifice.
+const FORCED_LAND_SAC = /\bsacrifices\b/i
+const EACH_LAND_DESTROY = /\bfor each land\b[^.]*\bdestroy\b/i
+const LAND_TYPE_CHANGE = /\ball\s+(?:\w+\s+)?(?:plains|islands?|swamps?|mountains?|forests?)\b[^.]*\b(?:becomes?|are|is)\b/i
+// Overload turns "destroy target land" into "destroy each land" (Break the Ice).
+const OVERLOADED_LAND_KILL = /\boverload\b/i
+
+function sentences(text: string): string[] {
+  return text.split(/(?<=\.)\s+|\n/)
+}
+
 export function isMassLandDenial(card: ScryCard): boolean {
   if (MLD_NAMES.has(card.name.split(' //')[0].toLowerCase())) return true
   const text = cardOracle(card)
-  return /destroy all lands|destroy all nonbasic lands|each player sacrifices?[^.]*lands/i.test(text)
+  return sentences(text).some(
+    (s) =>
+      ALL_PERMANENTS.test(s) ||
+      MULTI_TARGET_LANDS.test(s) ||
+      (MASS_DESTROY.test(s) && LAND_NOUN.test(s)) ||
+      LAND_LOCK.test(s) ||
+      (FORCED_LAND_SAC.test(s) && LAND_NOUN.test(s)) ||
+      EACH_LAND_DESTROY.test(s) ||
+      (LAND_TYPE_CHANGE.test(s) && BASIC_TYPES.test(s)) ||
+      (OVERLOADED_LAND_KILL.test(text) && /\bdestroy\s+target\s+(?:\w+\s+){0,3}land\b/i.test(s))
+  )
 }
 
 export interface BracketEstimate {
@@ -189,7 +248,7 @@ export function estimateBracketFromCards(
     })
   )
   const allCombos = combos?.included ?? []
-  const twoCardList = allCombos.filter((c) => c.cards.length <= 2 && isGameEndingCombo(c))
+  const twoCardList = allCombos.filter((c) => comboSize(c) <= 2 && isGameEndingCombo(c))
   const twoCardCombos = twoCardList.length
   const comboFloor = allCombos.reduce((m, c) => Math.max(m, comboMinBracket(c, cards)), 1)
   const fastCombos = allCombos.filter((c) => comboMinBracket(c, cards) >= 4).length
@@ -278,12 +337,12 @@ export function deckHealth(
   const cards = deck.cards
   const count = (cat: Category) =>
     cards.filter((d) => d.category === cat).reduce((n, d) => n + d.qty, 0)
-  const oracleCount = (re: RegExp) =>
-    cards.filter((d) => d.category !== 'Commander' && re.test(cardOracle(d.card))).length
+  const roleCount = (cat: Category) =>
+    cards.filter((d) => d.category !== 'Commander' && cardRoles(d.card).includes(cat)).length
 
   const draw = count('Card Draw')
   const ramp = count('Ramp')
-  const removal = count('Removal')
+  const removal = count('Removal') + count('Counterspells')
   const wipes = count('Board Wipes')
   const lands = count('Lands')
   const curve = avgCmc(cards)
@@ -291,9 +350,9 @@ export function deckHealth(
   const creatures = cards.filter(
     (d) => d.category !== 'Commander' && /Creature/.test(d.card.type_line)
   ).length
-  const recursion = oracleCount(/return .* from your graveyard/i)
-  const graveHate = oracleCount(/exile .*(graveyard|graveyards)/i)
-  const protection = oracleCount(/hexproof|indestructible|protection from|ward {|can't be countered/i)
+  const recursion = roleCount('Recursion')
+  const graveHate = roleCount('Graveyard Hate')
+  const protection = roleCount('Protection')
 
   const push = (warn: boolean, message: string, okMessage: string, detail: string) =>
     items.push({ level: warn ? 'warn' : 'ok', message: warn ? message : okMessage, detail })
@@ -405,12 +464,10 @@ export function analyzeDeck(deck: Deck): { strengths: string[]; weaknesses: stri
     cards.filter((d) => d.category === cat).reduce((n, d) => n + d.qty, 0)
   const draw = count('Card Draw')
   const ramp = count('Ramp')
-  const removal = count('Removal')
+  const removal = count('Removal') + count('Counterspells')
   const wipes = count('Board Wipes')
   const creatures = cards.filter((d) => /Creature/.test(d.card.type_line)).length
-  const protection = cards.filter((d) =>
-    /hexproof|indestructible|protection from|ward|can't be countered/i.test(cardOracle(d.card))
-  ).length
+  const protection = cards.filter((d) => cardRoles(d.card).includes('Protection')).length
 
   if (curve <= 3.0) strengths.push('Low curve enables a fast, consistent clock')
   if (ramp >= 10) strengths.push('Heavy ramp package gets your commander down early')

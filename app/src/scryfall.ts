@@ -58,6 +58,39 @@ export function legalOrUpcoming(): string {
   return `(legal:commander or date>${new Date().toISOString().slice(0, 10)})`
 }
 
+/**
+ * Scryfall search operators (`t:goblin`, `mv<=3`, `-is:land`, `!"Island"`, `o:draw`).
+ * Used to tell a typed card name apart from a syntax query in the search boxes.
+ */
+const SCRY_SYNTAX = /(?:^|\s)-?(?:[a-z]+(?::|[<>]=?|!?=)|!)/i
+
+export function isScrySyntax(text: string): boolean {
+  return SCRY_SYNTAX.test(text)
+}
+
+/**
+ * Rank name matches so an exact hit wins over the longer cards that merely
+ * contain the word — searching "Island" has to be able to reach basic Island
+ * past the hundred cards with "Island" somewhere in their name.
+ */
+export function rankNameMatch(card: ScryCard, needle: string): number {
+  const lower = needle.trim().toLowerCase()
+  const name = (card.name ?? '').toLowerCase()
+  const front = name.split(' //')[0].trim()
+  if (front === lower || name === lower) return 0
+  if (front.startsWith(lower)) return 1
+  if (new RegExp(`\\b${lower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(front)) return 2
+  return 3
+}
+
+/** Sort by match quality, keeping the incoming (edhrec) order inside each tier. */
+export function sortByNameMatch(cards: ScryCard[], needle: string): ScryCard[] {
+  return cards
+    .map((card, i) => ({ card, i, rank: rankNameMatch(card, needle) }))
+    .sort((a, b) => a.rank - b.rank || a.i - b.i)
+    .map((e) => e.card)
+}
+
 export async function searchCommanders(
   text: string,
   baseFilter = 'is:commander'
@@ -66,7 +99,7 @@ export async function searchCommanders(
   if (clean.length < 2) return []
   const q = `${baseFilter} ${legalOrUpcoming()} name:"${clean}"`
   try {
-    return await searchCards(q, { order: 'edhrec', max: 12 })
+    return sortByNameMatch(await searchCards(q, { order: 'edhrec', max: 12 }), clean)
   } catch {
     return []
   }
@@ -108,6 +141,15 @@ export function cardImage(card: ScryCard, size: 'small' | 'normal' | 'art_crop' 
 export function cardImageByName(name: string, version: 'small' | 'normal' = 'normal'): string {
   const exact = name.split(' //')[0]
   return `https://api.scryfall.com/cards/named?format=image&version=${version}&exact=${encodeURIComponent(exact)}`
+}
+
+/** Image for one specific printing, so a pinned art shows the art that was pinned. */
+export function cardImageByPrinting(
+  set: string,
+  collectorNumber: string,
+  version: 'small' | 'normal' = 'normal'
+): string {
+  return `https://api.scryfall.com/cards/${encodeURIComponent(set.toLowerCase())}/${encodeURIComponent(collectorNumber)}?format=image&version=${version}`
 }
 
 export function cardOracle(card: ScryCard): string {

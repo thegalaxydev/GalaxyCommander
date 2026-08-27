@@ -12,7 +12,7 @@ import {
   type DeckDetail,
 } from '../auth/social'
 import { parseCod, type CodEntry } from '../cod'
-import { cardImageByName, fetchNamedCard } from '../scryfall'
+import { cardImageByName, cardImageByPrinting, fetchNamedCard } from '../scryfall'
 import { navigateToUserProfile, navigateToView } from '../route'
 import { ColorPips } from './ManaCost'
 import { ShareIcon } from './ShareIcon'
@@ -146,8 +146,12 @@ export function DeckPage({ username, deckId, onAuthRequired }: Props) {
     }
   }
 
-  const moveHover = (name: string, e: React.MouseEvent) => {
-    const src = cardImageByName(name, 'normal')
+  const moveHover = (entry: CodEntry, e: React.MouseEvent) => {
+    // A deck that pinned a printing previews that exact art, not Scryfall's default.
+    const src =
+      entry.set && entry.collectorNumber
+        ? cardImageByPrinting(entry.set, entry.collectorNumber, 'normal')
+        : cardImageByName(entry.name, 'normal')
     const x = Math.min(e.clientX + 18, window.innerWidth - 260)
     const y = Math.min(Math.max(e.clientY - 170, 8), window.innerHeight - 360)
     setHover({ src, x, y })
@@ -163,8 +167,8 @@ export function DeckPage({ username, deckId, onAuthRequired }: Props) {
     <li
       key={entry.name}
       className="deck-page-card"
-      onMouseEnter={(e) => moveHover(entry.name, e)}
-      onMouseMove={(e) => moveHover(entry.name, e)}
+      onMouseEnter={(e) => moveHover(entry, e)}
+      onMouseMove={(e) => moveHover(entry, e)}
       onMouseLeave={() => setHover(null)}
     >
       <span className="deck-page-qty">{entry.qty}</span>
@@ -240,7 +244,15 @@ export function DeckPage({ username, deckId, onAuthRequired }: Props) {
                   <div className="deck-page-commander-card">
                     {commanders[0] && (
                       <img
-                        src={cardImageByName(commanders[0].name, 'normal')}
+                        src={
+                          commanders[0].set && commanders[0].collectorNumber
+                            ? cardImageByPrinting(
+                                commanders[0].set,
+                                commanders[0].collectorNumber,
+                                'normal'
+                              )
+                            : cardImageByName(commanders[0].name, 'normal')
+                        }
                         alt={commanders[0].name}
                         loading="lazy"
                       />

@@ -9,6 +9,7 @@ import type {
   DeckCard,
   DeckPersonality,
   GenStep,
+  MustIncludeCard,
   PowerProfile,
   ScryCard,
   UpgradeTier,
@@ -76,6 +77,7 @@ function initialGeneratorState(settings: AppSettings) {
     meta: gd.meta,
     tags: gd.tags,
     options: gd.options,
+    preferredSets: gd.preferredSets,
   }
 }
 
@@ -171,9 +173,10 @@ export default function App() {
   const [profile, setProfile] = useState<PowerProfile>(init.profile)
   const [personality, setPersonality] = useState<DeckPersonality>(init.personality)
   const [meta, setMeta] = useState<string[]>(init.meta)
-  const [mustInclude, setMustInclude] = useState<ScryCard[]>([])
+  const [mustInclude, setMustInclude] = useState<MustIncludeCard[]>([])
   const [neverInclude, setNeverInclude] = useState<ScryCard[]>([])
   const [rules, setRules] = useState('')
+  const [preferredSets, setPreferredSets] = useState<string[]>(init.preferredSets)
   const [splashColor, setSplashColor] = useState<string | null>(null)
   const [rulebreakerColors, setRulebreakerColors] = useState<string[]>([...WUBRG])
   const [deckSize, setDeckSize] = useState(DEFAULT_DECK_SIZE)
@@ -207,9 +210,10 @@ export default function App() {
         meta,
         tags,
         options,
+        preferredSets,
       },
     })
-  }, [appSettings, bracket, budget, personality, profile, meta, tags, options])
+  }, [appSettings, bracket, budget, personality, profile, meta, tags, options, preferredSets])
 
   useEffect(() => {
     const identity = commander ? unionIdentity(commander, partner) : null
@@ -245,6 +249,7 @@ export default function App() {
     setMeta(gd.meta)
     setTags(gd.tags)
     setOptions(gd.options)
+    setPreferredSets(gd.preferredSets)
   }
 
   const selectCommander = async (card: ScryCard | null) => {
@@ -347,6 +352,7 @@ export default function App() {
       splashColor,
       rulebreakerColors,
       deckSize,
+      preferredSets,
     })
   }
 
@@ -416,7 +422,7 @@ export default function App() {
     setPartner(partnerCard)
     setThemes([])
     setEdhrecThemes([])
-    setMustInclude(cards)
+    setMustInclude(cards.map((card) => ({ card, qty: 1 })))
     goToView('generate')
     let page = null
     if (partnerCard) {
@@ -498,11 +504,30 @@ export default function App() {
     setSteps([])
   }
 
+  const codOptions = { includePrintings: appSettings.exportPrintings }
+
+  // Swapping a card's art rebuilds the deck object so stats, exports, and the
+  // commander banner all pick up the new printing.
+  const changePrinting = (target: DeckCard, printing: ScryCard) => {
+    const current = deckRef.current
+    if (!current) return
+    const swap = (d: DeckCard) => (d.card.name === target.card.name ? { ...d, card: printing } : d)
+    const next: Deck = {
+      ...current,
+      commander: current.commander.name === target.card.name ? printing : current.commander,
+      cards: current.cards.map(swap),
+      ...(current.attractions ? { attractions: current.attractions.map(swap) } : {}),
+    }
+    setDeck(next)
+    deckRef.current = next
+    setLiveCards(next.cards)
+  }
+
   const exportCod = async () => {
     if (!deck) return
     const cod = generatedDeckToCod(deck)
     try {
-      await downloadCod(cod.name, deckToCod(cod))
+      await downloadCod(cod.name, deckToCod(cod, codOptions))
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       window.alert(message)
@@ -512,7 +537,7 @@ export default function App() {
   const exportText = async () => {
     if (!deck) return
     try {
-      await downloadText(generatedDeckToCod(deck).name, deck)
+      await downloadText(generatedDeckToCod(deck).name, deck, codOptions)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       window.alert(message)
@@ -720,6 +745,8 @@ export default function App() {
           onAnalyze={analyzeBuiltDeck}
           onImprove={improveBuiltDeck}
           initialDeck={builderSeed ?? sharedDeck}
+          preferredSets={preferredSets}
+          exportPrintings={appSettings.exportPrintings}
         />
       ) : view === 'packs' ? (
         <PackSimulator
@@ -759,6 +786,8 @@ export default function App() {
         onNeverInclude={setNeverInclude}
         rules={rules}
         onRules={setRules}
+        preferredSets={preferredSets}
+        onPreferredSets={setPreferredSets}
         splashColor={splashColor}
         onSplashColor={setSplashColor}
         rulebreakerColors={rulebreakerColors}
@@ -864,6 +893,7 @@ export default function App() {
                 simIterations={appSettings.simIterations}
                 disableCardPreviews={appSettings.disableCardPreviews}
                 settings={appSettings}
+                onPrinting={changePrinting}
               />
             </div>
           </div>

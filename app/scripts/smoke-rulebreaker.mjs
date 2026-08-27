@@ -46,7 +46,7 @@ results.push([
 ])
 const pips = panel.locator('.color-pip')
 results.push(['Tolabow: 4 splash pips (not blue)', (await pips.count()) === 4])
-results.push(['Tolabow: no deck-size input', (await panel.locator('input[type=number]').count()) === 0])
+results.push(['Tolabow: no deck-size slider', (await panel.locator('.slider-row').count()) === 0])
 await pips.first().click()
 results.push(['Tolabow: pip selects', (await panel.locator('.color-pip.active').count()) === 1])
 await page.screenshot({ path: '/tmp/rb-tolabow.png' })
@@ -81,13 +81,18 @@ await page.screenshot({ path: '/tmp/rb-valko.png' })
 // 2. Whtz — should offer a deck-size input and no splash picker.
 await pickCommander('Whtz')
 results.push(['Whtz: panel visible', await panel.isVisible()])
-const sizeInput = panel.locator('input[type=number]')
-
-results.push(['Whtz: deck-size input', (await sizeInput.count()) === 1])
+const sizeInput = panel.locator('input[type=range]')
+results.push(['Whtz: deck-size slider', (await sizeInput.count()) === 1])
 results.push(['Whtz: default 100', (await sizeInput.inputValue()) === '100'])
 results.push(['Whtz: no color pips at all', (await panel.locator('.color-pip').count()) === 0])
-results.push(['Whtz: has a size slider', (await panel.locator('input[type=range]').count()) === 1])
+// Styled with the shared .slider-row, matching the Power Profile sliders.
+results.push(['Whtz: uses shared slider style', (await panel.locator('.slider-row').count()) === 1])
+results.push(['Whtz: no raw number box', (await panel.locator('input[type=number]').count()) === 0])
 await sizeInput.fill('180')
+results.push([
+  'Whtz: slider value reflected in label',
+  (await panel.locator('.slider-row em').innerText()) === '180',
+])
 await page.screenshot({ path: '/tmp/rb-whtz.png' })
 
 // 3. A normal commander — panel must not appear at all.

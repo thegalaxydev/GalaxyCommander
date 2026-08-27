@@ -11,6 +11,16 @@ export interface ScryCardFace {
   type_line?: string
   oracle_text?: string
   image_uris?: ScryImageUris
+  colors?: string[]
+  color_indicator?: string[]
+  power?: string
+  toughness?: string
+  loyalty?: string
+  defense?: string
+  flavor_text?: string
+  artist?: string
+  watermark?: string
+  layout?: string
 }
 
 export interface ScryCard {
@@ -29,7 +39,14 @@ export interface ScryCard {
   toughness?: string
   image_uris?: ScryImageUris
   card_faces?: ScryCardFace[]
-  prices: { usd: string | null; usd_foil?: string | null }
+  prices: {
+    usd: string | null
+    usd_foil?: string | null
+    usd_etched?: string | null
+    eur?: string | null
+    eur_foil?: string | null
+    tix?: string | null
+  }
   edhrec_rank?: number
   game_changer?: boolean
   produced_mana?: string[]
@@ -43,6 +60,39 @@ export interface ScryCard {
   booster?: boolean
   promo_types?: string[]
   frame_effects?: string[]
+  // Everything below backs the Scryfall-syntax Card Rules filter (deckRules.ts).
+  color_indicator?: string[]
+  loyalty?: string
+  defense?: string
+  hand_modifier?: string
+  life_modifier?: string
+  reserved?: boolean
+  penny_rank?: number
+  set_type?: string
+  artist?: string
+  artist_ids?: string[]
+  flavor_text?: string
+  watermark?: string
+  border_color?: string
+  frame?: string
+  full_art?: boolean
+  textless?: boolean
+  promo?: boolean
+  digital?: boolean
+  games?: string[]
+  foil?: boolean
+  nonfoil?: boolean
+  oversized?: boolean
+  story_spotlight?: boolean
+  variation?: boolean
+  reprint?: boolean
+  highres_image?: boolean
+  image_status?: string
+  lang?: string
+  security_stamp?: string
+  content_warning?: boolean
+  attraction_lights?: number[]
+  all_parts?: { component?: string; name?: string; type_line?: string }[]
 }
 
 export type Category =
@@ -50,8 +100,15 @@ export type Category =
   | 'Lands'
   | 'Ramp'
   | 'Card Draw'
+  | 'Tutors'
   | 'Removal'
+  | 'Counterspells'
   | 'Board Wipes'
+  | 'Graveyard Hate'
+  | 'Recursion'
+  | 'Protection'
+  | 'Tokens'
+  | 'Stax'
   | 'Synergy'
   | 'Finishers'
 
@@ -59,8 +116,15 @@ export const CATEGORY_ORDER: Category[] = [
   'Commander',
   'Ramp',
   'Card Draw',
+  'Tutors',
   'Removal',
+  'Counterspells',
   'Board Wipes',
+  'Graveyard Hate',
+  'Recursion',
+  'Protection',
+  'Tokens',
+  'Stax',
   'Synergy',
   'Finishers',
   'Lands',
@@ -122,6 +186,23 @@ export const META_OPTIONS = [
   'Stax-heavy',
 ] as const
 
+/**
+ * A card pinned into the deck by the user, and how many copies to run. Anything
+ * above one copy is only legal for basics and "any number of cards named…"
+ * cards, but the generator honours whatever the deckbuilder asked for.
+ */
+export interface MustIncludeCard {
+  card: ScryCard
+  qty: number
+}
+
+/** Cards a deck may legally run more than one copy of. */
+export function allowsMultiples(card: ScryCard): boolean {
+  if (card.type_line?.includes('Basic')) return true
+  const text = card.oracle_text ?? (card.card_faces ?? []).map((f) => f.oracle_text ?? '').join('\n')
+  return /any number of cards named/i.test(text)
+}
+
 export interface BuildSettings {
   commander: ScryCard
   partner?: ScryCard | null
@@ -135,7 +216,7 @@ export interface BuildSettings {
   powerProfile?: PowerProfile
   personality?: DeckPersonality
   meta?: string[]
-  mustInclude?: ScryCard[]
+  mustInclude?: MustIncludeCard[]
   neverInclude?: string[]
   // Rulebreaker: the extra color chosen for a "one color of your choice" clause
   // (Tolabow, Loch Rascal). Ignored unless the commander grants one.
@@ -149,6 +230,10 @@ export interface BuildSettings {
   // Scryfall-style filter fragments (e.g. `t:Legendary -t:Land`) applied to every
   // auto-added card. See deckRules.ts.
   rules?: string
+  // Set codes, highest priority first. Once the list is built, every card is
+  // re-printed from the first of these sets that has it. Purely cosmetic — it
+  // changes which art you get, never which cards are chosen.
+  preferredSets?: string[]
 }
 
 export interface Deck {
@@ -160,8 +245,22 @@ export interface Deck {
   attractions?: DeckCard[]
 }
 
+/**
+ * A slot in a combo that any qualifying card can fill, e.g. "Permanent that can
+ * be cast using {C}". Spellbook lists these separately from the named cards, so
+ * they still count toward the combo's real size.
+ */
+export interface ComboTemplate {
+  name: string
+  quantity: number
+}
+
 export interface ComboInfo {
+  /** Commander Spellbook variant id, e.g. `3875-5702--143`. */
+  id?: string
   cards: string[]
+  /** Unnamed slots the combo also needs. See ComboTemplate. */
+  requires?: ComboTemplate[]
   produces: string[]
   description: string
   missing?: string[]

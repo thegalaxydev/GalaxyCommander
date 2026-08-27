@@ -14,6 +14,7 @@ export interface SavedGeneratorDefaults {
   meta: string[]
   tags: string[]
   options: AdvancedOptions
+  preferredSets: string[]
 }
 
 export interface AppSettings {
@@ -28,6 +29,8 @@ export interface AppSettings {
   budgetCaps: BudgetCaps
   simIterations: number
   disableCardPreviews: boolean
+  /** Write set / collector number into exported .cod and .txt decklists. */
+  exportPrintings: boolean
   uiPreset: UiPreset
   accentMode: AccentMode
   showStarfield: boolean
@@ -56,6 +59,7 @@ export function defaultGeneratorDefaults(): SavedGeneratorDefaults {
     meta: [],
     tags: [],
     options: { ...DEFAULT_OPTIONS },
+    preferredSets: [],
   }
 }
 
@@ -71,6 +75,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   budgetCaps: { ...DEFAULT_BUDGET_CAPS },
   simIterations: 1000,
   disableCardPreviews: false,
+  exportPrintings: true,
   uiPreset: 'galaxy',
   accentMode: 'commander',
   showStarfield: true,
@@ -97,6 +102,7 @@ export function loadSettings(): AppSettings {
           ...DEFAULT_OPTIONS,
           ...parsed.generatorDefaults?.options,
         },
+        preferredSets: parsed.generatorDefaults?.preferredSets ?? [],
       },
     }
   } catch {
