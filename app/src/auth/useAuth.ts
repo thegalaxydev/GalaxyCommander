@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { authClient, type AuthUser } from './client'
 import { fetchSessionUser, mergeOnLogin, setSyncEnabled } from './sync'
+import { ACCOUNTS_ENABLED } from '../features'
 
-export function useAuth() {
+function useAccountAuth() {
   const { data: session, isPending, refetch } = authClient.useSession()
   const [user, setUser] = useState<AuthUser | null>(null)
 
@@ -93,3 +94,24 @@ export function useAuth() {
     refresh,
   }
 }
+
+const accountsOff = async (): Promise<never> => {
+  throw new Error('Accounts are turned off')
+}
+
+/** Always signed out, and never calls the auth API. */
+const signedOut: ReturnType<typeof useAccountAuth> = {
+  user: null,
+  loading: false,
+  signIn: accountsOff,
+  signUp: accountsOff,
+  signOut: async () => {},
+  forgotPassword: accountsOff,
+  refresh: async () => null,
+}
+
+function useSignedOut() {
+  return signedOut
+}
+
+export const useAuth = ACCOUNTS_ENABLED ? useAccountAuth : useSignedOut

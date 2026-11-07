@@ -51,6 +51,7 @@ import { UserProfilePage } from './components/UserProfilePage'
 import { ProfileSettingsPage } from './components/ProfileSettingsPage'
 import { DeckPage } from './components/DeckPage'
 import { useAuth } from './auth/useAuth'
+import { ACCOUNTS_ENABLED } from './features'
 import { pullUserData, setSyncEnabled } from './auth/sync'
 import { generatedDeckToCod, deckToCod, downloadCod, downloadText, upsertSavedDeck, type CodDeck } from './cod'
 import { buildShareUrl, clearShareParam, createPermalink, readSharedDeckFromUrl, shareLinkExpired } from './share'
@@ -670,7 +671,7 @@ export default function App() {
               />
             </svg>
           </a>
-          {user ? (
+          {!ACCOUNTS_ENABLED ? null : user ? (
             <>
               {user.username && (
                 <button
@@ -721,7 +722,7 @@ export default function App() {
         onClearData={handleClearData}
         commanderIdentity={commander ? unionIdentity(commander, partner) : null}
       />
-      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
+      {ACCOUNTS_ENABLED && <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />}
       {page.kind === 'userProfile' ? (
         <UserProfilePage username={page.username} onAuthRequired={() => setAuthOpen(true)} />
       ) : page.kind === 'deck' ? (

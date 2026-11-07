@@ -1,3 +1,5 @@
+import { ACCOUNTS_ENABLED } from './features'
+
 export type AppView = 'generate' | 'builder' | 'packs'
 
 export type AppPage =
@@ -43,19 +45,22 @@ export function isProfileSettingsPath(pathname: string): boolean {
 export function isReservedAppPath(pathname: string): boolean {
   return (
     isSharedDeckPath(pathname) ||
-    usernameFromProfilePath(pathname) !== null ||
-    deckFromPath(pathname) !== null ||
-    isProfileSettingsPath(pathname)
+    (ACCOUNTS_ENABLED &&
+      (usernameFromProfilePath(pathname) !== null ||
+        deckFromPath(pathname) !== null ||
+        isProfileSettingsPath(pathname)))
   )
 }
 
 export function pageFromPathname(pathname: string): AppPage | null {
   if (pathname === '/' || pathname === '') return { kind: 'app', view: 'generate' }
-  const deck = deckFromPath(pathname)
-  if (deck) return { kind: 'deck', username: deck.username, deckId: deck.deckId }
-  const profileUser = usernameFromProfilePath(pathname)
-  if (profileUser) return { kind: 'userProfile', username: profileUser }
-  if (isProfileSettingsPath(pathname)) return { kind: 'profileSettings' }
+  if (ACCOUNTS_ENABLED) {
+    const deck = deckFromPath(pathname)
+    if (deck) return { kind: 'deck', username: deck.username, deckId: deck.deckId }
+    const profileUser = usernameFromProfilePath(pathname)
+    if (profileUser) return { kind: 'userProfile', username: profileUser }
+    if (isProfileSettingsPath(pathname)) return { kind: 'profileSettings' }
+  }
   const view = PATH_VIEW[pathname]
   if (view) return { kind: 'app', view }
   return null
